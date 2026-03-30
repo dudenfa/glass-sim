@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Marl Trading Live Market</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="shell" data-app-root>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div>
+          <p class="eyebrow">Synthetic market live view</p>
+          <h1>Marl Trading Exchange</h1>
+          <p class="subtitle">Compact live order book, tape, and agent ecology.</p>
+        </div>
+      </div>
+
+      <div class="status-cluster">
+        <div class="status-pill" id="connectionStatus">Connecting</div>
+        <div class="status-pill subtle" id="modeStatus">Autoplay ready</div>
+      </div>
+
+      <div class="control-row" aria-label="Live market controls">
+        <button class="control-btn" id="playButton" type="button">Play</button>
+        <button class="control-btn" id="pauseButton" type="button">Pause</button>
+        <button class="control-btn" id="stepButton" type="button">Step</button>
+        <button class="control-btn" id="resetButton" type="button">Reset</button>
+        <label class="speed-label" for="speedSelect">Speed</label>
+        <select id="speedSelect" class="speed-select" aria-label="Simulation speed">
+          <option value="0.5">0.5x</option>
+          <option value="1" selected>1x</option>
+          <option value="2">2x</option>
+          <option value="4">4x</option>
+          <option value="8">8x</option>
+        </select>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="main-column top-strip">
+        <section class="panel chart-panel">
+          <div class="panel-head chart-head">
+            <div class="chart-copy">
+              <div class="chart-title-row">
+                <h2 id="marketTitle">Waiting for market data</h2>
+                <div class="chart-price-block">
+                  <span>Price</span>
+                  <strong id="marketPrice">--</strong>
+                </div>
+              </div>
+              <p class="chart-step-inline">Step <strong id="marketTimestamp">--</strong></p>
+            </div>
+            <div class="chart-tools">
+              <button class="chip chart-mode-toggle chip-active" id="chartModeCandles" type="button" aria-label="Candles">
+                <span aria-hidden="true" class="toggle-icon toggle-candles">◧</span>
+                <span class="sr-only">Candles</span>
+              </button>
+              <button class="chip chart-mode-toggle" id="chartModeLine" type="button" aria-label="Line">
+                <span aria-hidden="true" class="toggle-icon toggle-line">─</span>
+                <span class="sr-only">Line</span>
+              </button>
+            </div>
+          </div>
+
+
+
+          <div class="chart-stage">
+            <canvas id="priceChart" width="1400" height="760" aria-label="Market price chart"></canvas>
+          </div>
+
+          <div class="chart-market-strip" aria-label="Market data">
+            <div id="marketStats" class="stats-row chart-stats"></div>
+            <div id="newsFeed" class="news-feed news-table" aria-label="Recent news"></div>
+          </div>
+        </section>
+
+        <section class="panel book-panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="panel-kicker">Order book</p>
+            </div>
+          </div>
+          <div id="orderBookTop" class="orderbook-top"></div>
+          <details class="book-details" id="fullBookToggle">
+            <summary>Expand full book</summary>
+            <div id="orderBookFull" class="orderbook-full"></div>
+          </details>
+        </section>
+
+        <section class="panel trades-panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="panel-kicker">RECENT TRADES</p>
+            </div>
+          </div>
+          <div id="tradesTape" class="feed-list scroll-panel"></div>
+          <div id="latestOrders" class="latest-orders" aria-label="Latest orders"></div>
+        </section>
+      </section>
+
+      <section class="bottom-strip">
+        <section class="panel agents-panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="panel-kicker">Agents</p>
+              <h2>Capital map</h2>
+              <p class="panel-note">Cash, inventory, equity, and PnL by participant in a compact public view.</p>
+            </div>
+          </div>
+          <div id="agentSummary" class="agent-summary"></div>
+          <div class="agent-column">
+            <div class="column-head">
+              <h3>Participant cards</h3>
+              <p>Cash, inventory, equity, and PnL by participant.</p>
+            </div>
+            <div id="agentPortfolios" class="portfolio-grid"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

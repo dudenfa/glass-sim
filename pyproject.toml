@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marl-trading"
+version = "0.1.0"
+description = "Synthetic market simulation and MARL thesis scaffold"
+readme = "THESIS.md"
+requires-python = ">=3.9"
+license = {text = "Proprietary"}
+authors = [{name = "Codex"}]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
