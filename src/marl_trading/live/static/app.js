@@ -57,6 +57,12 @@ const state = {
   backendStateUrl: null,
   backendControlUrl: null,
   timer: null,
+  loopGeneration: 0,
+  refreshInFlight: false,
+  controlInFlight: false,
+  requestQueue: Promise.resolve(),
+  lastRenderKey: "",
+  lastRenderMode: "",
   snapshot: null,
   chartHover: null,
   demoWorld: createDemoWorld(CONFIG.seed),
@@ -187,6 +193,29 @@ function fmtLatestOrderType(action) {
 function isOrderEvent(action) {
   const raw = String(firstDefined(action, ["orderType", "order_type", "eventType", "event_type", "action", "type", "intent"], "")).trim().toLowerCase();
   return /(limit|market|cancel|order)/.test(raw);
+}
+
+function snapshotRenderKey(snapshot) {
+  const session = snapshot?.session || {};
+  const summary = snapshot?.summary || {};
+  const market = snapshot?.market || {};
+  const stats = snapshot?.stats || {};
+  const activeAgents = Number(firstDefined(session, ["active_agent_count"], stats.activeAgents ?? 0));
+  return [
+    snapshot?.source || state.source,
+    session.reset_count ?? 0,
+    session.step_index ?? snapshot?.timestamp ?? 0,
+    session.status || "",
+    session.playing ? "1" : "0",
+    session.finished ? "1" : "0",
+    Number(firstDefined(summary, ["event_count"], stats.eventCount ?? 0)),
+    Number(firstDefined(summary, ["trade_count"], stats.tradeCount ?? 0)),
+    Number(firstDefined(summary, ["news_count"], stats.newsCount ?? 0)),
+    Number.isFinite(market.midpoint) ? market.midpoint.toFixed(4) : "na",
+    Number.isFinite(market.spread) ? market.spread.toFixed(4) : "na",
+    activeAgents,
+    state.chartMode,
+  ].join("|");
 }
 
 function fmtTime(value) {
@@ -1727,8 +1756,15 @@ function renderPortfolios(snapshot) {
   }).join("");
 }
 
-function renderSnapshot(snapshot) {
+function renderSnapshot(snapshot, { force = false } = {}) {
+  const renderKey = snapshotRenderKey(snapshot);
+  if (!force && state.lastRenderKey === renderKey && state.lastRenderMode === state.chartMode) {
+    state.snapshot = snapshot;
+    return false;
+  }
   state.snapshot = snapshot;
+  state.lastRenderKey = renderKey;
+  state.lastRenderMode = state.chartMode;
   renderMarketMeta(snapshot);
   renderRecentNews(snapshot);
   renderOrderBook(snapshot);
@@ -1739,6 +1775,7 @@ function renderSnapshot(snapshot) {
   renderPortfolios(snapshot);
   updateModeButtons();
   drawChart(snapshot);
+  return true;
 }
 
 function backendAvailable() {
@@ -1786,19 +1823,57 @@ async function loadBackendSnapshot() {
   return normalizeBackendState(data);
 }
 
+function enqueueBackendRequest(task) {
+  const next = state.requestQueue.then(task);
+  state.requestQueue = next.catch(() => {});
+  return next;
+}
+
+function clearPollingTimer() {
+  if (state.timer !== null) {
+    clearTimeout(state.timer);
+    state.timer = null;
+  }
+}
+
+function currentPollDelay() {
+  const speed = Number.parseFloat(els.speedSelect.value || String(CONFIG.defaultSpeed)) || 1;
+  return Math.max(250, Math.round(CONFIG.pollMs / Math.max(speed, 0.25)));
+}
+
+function stopPolling() {
+  state.loopGeneration += 1;
+  clearPollingTimer();
+}
+
+function schedulePolling({ immediate = false } = {}) {
+  clearPollingTimer();
+  const generation = state.loopGeneration;
+  const delay = immediate ? 0 : currentPollDelay();
+  state.timer = window.setTimeout(() => {
+    state.timer = null;
+    void runPollingTick(generation);
+  }, delay);
+}
+
 async function sendControl(action, extra = {}) {
   if (!backendAvailable()) return null;
   const controlUrl = state.backendControlUrl || ENDPOINTS.control[0];
   if (!controlUrl) return null;
-  return fetchJson(controlUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      action,
-      speed: Number.parseFloat(els.speedSelect.value || String(CONFIG.defaultSpeed)),
-      ...extra,
-    }),
-  });
+  state.controlInFlight = true;
+  try {
+    return await enqueueBackendRequest(() => fetchJson(controlUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action,
+        speed: Number.parseFloat(els.speedSelect.value || String(CONFIG.defaultSpeed)),
+        ...extra,
+      }),
+    }));
+  } finally {
+    state.controlInFlight = false;
+  }
 }
 
 function demoSnapshotAt(index) {
@@ -1814,19 +1889,28 @@ function stepDemo() {
 
 function resetDemo() {
   state.demoIndex = 0;
-  renderSnapshot(demoSnapshotAt(0));
+  renderSnapshot(demoSnapshotAt(0), { force: true });
   setModeStatus("Demo reset");
 }
 
-async function refreshBackend() {
+async function refreshBackend({ generation = state.loopGeneration, force = false } = {}) {
+  if (!backendAvailable()) return null;
+  state.refreshInFlight = true;
   try {
-    const snapshot = await loadBackendSnapshot();
+    const snapshot = await enqueueBackendRequest(() => loadBackendSnapshot());
+    if (generation !== state.loopGeneration) {
+      return snapshot;
+    }
     state.connected = true;
     state.lastError = null;
     setConnectionStatus("Connected", "live");
     setModeStatus("Backend live stream");
-    renderSnapshot(snapshot);
+    renderSnapshot(snapshot, { force });
+    return snapshot;
   } catch (error) {
+    if (generation !== state.loopGeneration) {
+      return null;
+    }
     state.connected = false;
     state.lastError = error;
     if (state.source === "backend") {
@@ -1839,29 +1923,41 @@ async function refreshBackend() {
     }
     setConnectionStatus("Demo mode", "demo");
     setModeStatus("Backend unavailable, using local demo");
-    renderSnapshot(demoSnapshotAt(state.demoIndex));
+    renderSnapshot(demoSnapshotAt(state.demoIndex), { force: true });
+    return null;
+  } finally {
+    state.refreshInFlight = false;
   }
 }
 
 function restartTimer() {
-  if (state.timer) {
-    clearInterval(state.timer);
+  stopPolling();
+  if (state.autoplay) {
+    schedulePolling({ immediate: false });
   }
-  const speed = Number.parseFloat(els.speedSelect.value || String(CONFIG.defaultSpeed)) || 1;
-  const interval = Math.max(250, Math.round(CONFIG.pollMs / Math.max(speed, 0.25)));
-  state.timer = setInterval(async () => {
-    if (state.source === "backend") {
-      await refreshBackend();
-      return;
+}
+
+async function runPollingTick(generation) {
+  if (generation !== state.loopGeneration) {
+    return;
+  }
+
+  if (state.source === "backend") {
+    await refreshBackend({ generation });
+    if (generation === state.loopGeneration && state.source === "backend" && state.autoplay) {
+      schedulePolling({ immediate: false });
     }
-    if (state.autoplay) {
-      stepDemo();
-      return;
-    }
-    if (state.snapshot) {
-      renderSnapshot(state.snapshot);
-    }
-  }, interval);
+    return;
+  }
+
+  if (!state.autoplay) {
+    return;
+  }
+
+  stepDemo();
+  if (generation === state.loopGeneration && state.autoplay) {
+    schedulePolling({ immediate: false });
+  }
 }
 
 function setChartMode(mode) {
@@ -1896,9 +1992,11 @@ function bindEvents() {
   els.playButton.addEventListener("click", async () => {
     state.autoplay = true;
     setModeStatus("Autoplay on");
+    stopPolling();
     if (backendAvailable()) {
       await sendControl("play");
-      await refreshBackend();
+      await refreshBackend({ force: true });
+      restartTimer();
       return;
     }
     restartTimer();
@@ -1907,18 +2005,19 @@ function bindEvents() {
   els.pauseButton.addEventListener("click", async () => {
     state.autoplay = false;
     setModeStatus("Paused");
+    stopPolling();
     if (backendAvailable()) {
       await sendControl("pause");
-      await refreshBackend();
+      await refreshBackend({ force: true });
       return;
     }
-    restartTimer();
   });
 
   els.stepButton.addEventListener("click", async () => {
+    stopPolling();
     if (backendAvailable()) {
       await sendControl("step", { steps: 1 });
-      await refreshBackend();
+      await refreshBackend({ force: true });
       return;
     }
     stepDemo();
@@ -1926,9 +2025,10 @@ function bindEvents() {
 
   els.resetButton.addEventListener("click", async () => {
     state.autoplay = false;
+    stopPolling();
     if (backendAvailable()) {
       await sendControl("reset");
-      await refreshBackend();
+      await refreshBackend({ force: true });
       return;
     }
     resetDemo();
@@ -1936,9 +2036,10 @@ function bindEvents() {
 
   els.speedSelect.value = String(CONFIG.defaultSpeed || 1);
   els.speedSelect.addEventListener("change", async () => {
+    stopPolling();
     if (backendAvailable()) {
       await sendControl("speed");
-      await refreshBackend();
+      await refreshBackend({ force: true });
     }
     restartTimer();
     setModeStatus(`Speed ${els.speedSelect.value}x`);

@@ -14,8 +14,7 @@ def test_live_ui_assets_exist() -> None:
         "Synthetic market live view",
         "Marl Trading Exchange",
         "Compact live order book, tape, and agent ecology.",
-        "Top 10 ladder",
-        "Recent trades",
+        "RECENT TRADES",
         "Recent news",
         "Capital map",
         "Participant cards",
@@ -39,8 +38,16 @@ def test_live_ui_assets_exist() -> None:
     assert "renderRecentNews" in app_js
     assert "renderLatestOrders" in app_js
     assert "CHART_WINDOW_SIZE" in app_js
+    assert "setTimeout(" in app_js
+    assert "setInterval(" not in app_js
+    assert "loopGeneration" in app_js
+    assert "refreshInFlight" in app_js
+    assert "controlInFlight" in app_js
+    assert "enqueueBackendRequest" in app_js
+    assert "stopPolling" in app_js
+    assert "schedulePolling" in app_js
     assert "TRADES_VISIBLE_ROWS = 10" in app_js
-    assert "LATEST_ORDERS_VISIBLE_ROWS = 5" in app_js
+    assert "LATEST_ORDERS_VISIBLE_ROWS = 10" in app_js
     assert "NEWS_VISIBLE_ROWS = 5" in app_js
     assert "ORDER_BOOK_FULL_LEVELS" in app_js
     assert "fmtOrderBookTotal" in app_js

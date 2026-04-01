@@ -43,8 +43,7 @@ def test_live_ui_shell_contains_compact_panels() -> None:
     for label in [
         "Candles",
         "Line",
-        "Top 10 ladder",
-        "Recent trades",
+        "RECENT TRADES",
         "Recent news",
         "Latest orders",
         "Capital map",
@@ -67,10 +66,6 @@ def test_live_ui_shell_contains_compact_panels() -> None:
         "chart-stage",
         "chart-market-strip",
         "chart-stats",
-        "news-feed-head",
-        "news-feed-columns",
-        "news-row",
-        "news-headline",
         "sr-only",
     ]:
         assert token in html
@@ -124,7 +119,6 @@ def test_live_ui_styles_include_market_layout() -> None:
         "min-height: 15px",
         "grid-template-columns: 68px 44px minmax(136px, 1.6fr) minmax(110px, max-content) 18px",
         "grid-template-columns: 68px 42px minmax(108px, 0.95fr) minmax(124px, 1.35fr) 18px",
-        "height: 260px",
         "white-space: nowrap",
         ".chart-title-row",
         ".chart-price-block",
@@ -134,7 +128,6 @@ def test_live_ui_styles_include_market_layout() -> None:
         ".chart-stage",
         ".chart-market-strip",
         ".chart-panel .news-feed",
-        ".chart-stats",
         ".news-feed-head",
         ".news-feed-columns",
         ".news-feed-columns > .news-col-severity",

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import defaultdict
 import threading
 import time
 from typing import Any
 
-from marl_trading.analysis import EventType, MarketEvent, OrderBookSnapshot, summarize_event_log
+from marl_trading.analysis import EventType, MarketEvent, OrderBookSnapshot
 from marl_trading.configs.defaults import default_simulation_config
 from marl_trading.core.config import SimulationConfig
 from marl_trading.market.simulator import SyntheticMarketSimulator, _analysis_snapshot_from_exchange_snapshot
@@ -47,6 +48,10 @@ class LiveMarketSession:
         self._pnl_trackers: dict[str, _PnLTracker] = {}
         self._trade_history: list[dict[str, Any]] = []
         self._last_action_by_agent: dict[str, dict[str, Any]] = {}
+        self._event_type_counts: dict[str, int] = defaultdict(int)
+        self._first_event_timestamp: int | None = None
+        self._last_event_timestamp: int | None = None
+        self._max_news_severity: float | None = None
         self._latest_state: dict[str, Any] | None = None
         self.playing = False
         self.finished = False
@@ -168,8 +173,19 @@ class LiveMarketSession:
         for event in events[self._processed_event_count :]:
             event_dict = self._event_to_dict(event)
             event_type = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+            self._event_type_counts[event_type] += 1
+            timestamp_ns = int(event.timestamp)
+            if self._first_event_timestamp is None:
+                self._first_event_timestamp = timestamp_ns
+            self._last_event_timestamp = timestamp_ns
             if event_type == EventType.TRADE.value:
                 self._record_trade(event)
+            elif event_type == EventType.NEWS.value:
+                severity = event.payload.get("severity")
+                if severity is not None:
+                    severity_value = float(severity)
+                    if self._max_news_severity is None or severity_value > self._max_news_severity:
+                        self._max_news_severity = severity_value
             elif event_type in {
                 EventType.LIMIT_ORDER.value,
                 EventType.MARKET_ORDER.value,
@@ -178,40 +194,70 @@ class LiveMarketSession:
                 self._last_action_by_agent[str(event.agent_id)] = event_dict
             self._processed_event_count += 1
 
-    def _build_line(self) -> list[dict[str, Any]]:
+    def _build_line(self, *, start_index: int | None = None) -> list[dict[str, Any]]:
+        price_history = self.simulator.price_history
+        if not price_history:
+            return []
+
+        if start_index is None:
+            history_limit = max(int(self.history_limit), 1)
+            start_index = max(0, len(price_history) - history_limit)
+        else:
+            start_index = max(0, int(start_index))
+        fundamental_history = self.simulator.fundamental_history
+        fallback_fundamental = float(self.simulator.fundamental.current_value)
+
         return [
             {
                 "step_index": index,
                 "timestamp_ns": index,
-                "midpoint": float(midpoint),
-                "fundamental": float(self.simulator.fundamental_history[index]) if index < len(self.simulator.fundamental_history) else float(self.simulator.fundamental.current_value),
+                "midpoint": float(price_history[index]),
+                "fundamental": float(fundamental_history[index]) if index < len(fundamental_history) else fallback_fundamental,
             }
-            for index, midpoint in enumerate(self.simulator.price_history)
+            for index in range(start_index, len(price_history))
         ]
 
-    def _build_candles(self, line: list[dict[str, Any]], bucket_size: int) -> list[dict[str, Any]]:
+    def _build_candles(
+        self,
+        line: list[dict[str, Any]],
+        bucket_size: int,
+        *,
+        recent_trades: list[dict[str, Any]] | None = None,
+        recent_events: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
         candles: list[dict[str, Any]] = []
-        for bucket_index, start in enumerate(range(0, len(line), bucket_size)):
-            chunk = line[start : start + bucket_size]
-            if not chunk:
-                continue
+        recent_trades = list(recent_trades or [])
+        recent_events = list(recent_events or [])
+        if bucket_size <= 0:
+            return candles
+
+        buckets: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for point in line:
+            step_index = int(point["step_index"])
+            bucket_index = step_index // bucket_size
+            buckets[bucket_index].append(point)
+
+        for bucket_index in sorted(buckets):
+            chunk = buckets[bucket_index]
             midpoint_values = [float(point["midpoint"]) for point in chunk if point.get("midpoint") is not None]
             if not midpoint_values:
                 continue
             fundamental_values = [float(point["fundamental"]) for point in chunk if point.get("fundamental") is not None]
+            start_step = int(chunk[0]["step_index"])
+            end_step = int(chunk[-1]["step_index"])
             candles.append(
                 {
                     "bucket_index": bucket_index,
-                    "start_step": int(chunk[0]["step_index"]),
-                    "end_step": int(chunk[-1]["step_index"]),
+                    "start_step": start_step,
+                    "end_step": end_step,
                     "open": midpoint_values[0],
                     "high": max(midpoint_values),
                     "low": min(midpoint_values),
                     "close": midpoint_values[-1],
                     "fundamental_open": fundamental_values[0] if fundamental_values else None,
                     "fundamental_close": fundamental_values[-1] if fundamental_values else None,
-                    "trade_count": int(sum(1 for trade in self._trade_history if start <= int(trade["timestamp_ns"]) <= int(chunk[-1]["step_index"]))),
-                    "news_count": int(sum(1 for event in self.simulator.event_log.events if self._event_type(event) == EventType.NEWS.value and start <= int(event.timestamp) <= int(chunk[-1]["step_index"]))),
+                    "trade_count": int(sum(1 for trade in recent_trades if start_step <= int(trade["timestamp_ns"]) <= end_step)),
+                    "news_count": int(sum(1 for event in recent_events if event.get("event_type") == EventType.NEWS.value and start_step <= int(event["timestamp_ns"]) <= end_step)),
                 }
             )
         return candles
@@ -282,10 +328,14 @@ class LiveMarketSession:
             )
         full_snapshot = self._analysis_snapshot(depth=max(full_depth, 1), timestamp_ns=current_step) if full_book else top_snapshot
         mark_price = float(top_snapshot.midpoint() or self.simulator.fundamental.current_value)
-        line = self._build_line()
-        candles = self._build_candles(line, candle_window)
         recent_events = [self._event_to_dict(event) for event in self.simulator.event_log.events[-self.event_limit :]]
         recent_trades = [trade for trade in self._trade_history[-self.event_limit :]]
+        line = self._build_line()
+        candle_start_index = int(line[0]["step_index"]) if line else 0
+        if candle_window > 0:
+            candle_start_index = max(0, candle_start_index - (candle_start_index % candle_window))
+        candle_line = self._build_line(start_index=candle_start_index)
+        candles = self._build_candles(candle_line, candle_window, recent_trades=recent_trades, recent_events=recent_events)
         recent_news = []
         for event in recent_events:
             if event["event_type"] != EventType.NEWS.value:
@@ -341,7 +391,19 @@ class LiveMarketSession:
                 }
             )
         agents = self._build_agent_states(mark_price)
-        summary = summarize_event_log(self.simulator.event_log)
+        summary = {
+            "event_count": len(self.simulator.event_log.events),
+            "trade_count": int(self._event_type_counts.get(EventType.TRADE.value, 0)),
+            "news_count": int(self._event_type_counts.get(EventType.NEWS.value, 0)),
+            "snapshot_count": int(self._event_type_counts.get(EventType.SNAPSHOT.value, 0)),
+            "fundamental_point_count": len(self.simulator.fundamental_history),
+            "unique_agent_count": len(self.simulator.agents),
+            "first_timestamp": self._first_event_timestamp,
+            "last_timestamp": self._last_event_timestamp,
+            "final_midpoint": top_snapshot.midpoint(),
+            "news_severity_max": self._max_news_severity,
+            "has_order_book_snapshots": bool(self._event_type_counts.get(EventType.SNAPSHOT.value, 0)),
+        }
 
         market = {
             "symbol": self.simulator.market_config.symbol.value,
@@ -450,6 +512,10 @@ class LiveMarketSession:
             self._pnl_trackers = {}
             self._trade_history = []
             self._last_action_by_agent = {}
+            self._event_type_counts = defaultdict(int)
+            self._first_event_timestamp = None
+            self._last_event_timestamp = None
+            self._max_news_severity = None
             self._bootstrap_trackers()
             self._ingest_new_events()
             self.playing = False

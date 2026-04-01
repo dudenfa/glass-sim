@@ -61,6 +61,51 @@ def test_live_session_tape_accumulates_across_snapshot_window() -> None:
     assert len(state["tape"]) > 1
 
 
+def test_live_session_bounded_history_window_preserves_step_indices() -> None:
+    session = LiveMarketSession(
+        horizon=180,
+        history_limit=24,
+        event_limit=24,
+        autoplay=False,
+        step_delay_seconds=0.01,
+    )
+
+    for _ in range(80):
+        session.step()
+
+    state = session.state()
+    history = state["history"]
+    market_line = state["market"]["line"]
+    candles = state["market"]["candles"]
+
+    assert 0 < len(history) <= 24
+    assert len(market_line) == len(history)
+    assert len(candles) <= len(history)
+    assert history[-1]["step_index"] == state["session"]["step_index"]
+    assert history[0]["step_index"] == history[-1]["step_index"] - len(history) + 1
+    assert state["summary"]["history_point_count"] == len(history)
+
+
+def test_live_session_candles_stay_aligned_to_absolute_step_buckets() -> None:
+    session = LiveMarketSession(
+        horizon=180,
+        history_limit=24,
+        event_limit=24,
+        autoplay=False,
+        step_delay_seconds=0.01,
+    )
+
+    for _ in range(80):
+        session.step()
+
+    state = session.state()
+    candles = state["market"]["candles"]
+
+    assert candles
+    assert all(int(candle["start_step"]) % 5 == 0 for candle in candles)
+    assert all(int(candle["end_step"]) >= int(candle["start_step"]) for candle in candles)
+
+
 def test_live_session_recent_actions_include_order_metadata() -> None:
     session = LiveMarketSession(horizon=80, event_limit=40, autoplay=False, step_delay_seconds=0.01)
 
