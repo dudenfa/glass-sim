@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -11,13 +12,19 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from marl_trading.analysis import plot_market_replay, summarize_event_log
-from marl_trading.configs.defaults import default_simulation_config
+from marl_trading.configs import available_preset_names, build_preset_config
 from marl_trading.market import MarketRunResult, SyntheticMarketSimulator, plot_market_world
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the first scripted synthetic market demo.")
-    parser.add_argument("--seed", type=int, default=7, help="Random seed for the demo run.")
+    parser.add_argument(
+        "--preset",
+        choices=available_preset_names(),
+        default="baseline",
+        help="Named preset from marl_trading.configs.presets.",
+    )
+    parser.add_argument("--seed", type=int, default=None, help="Override the preset seed.")
     parser.add_argument("--horizon", type=int, default=240, help="Number of exchange events to simulate.")
     parser.add_argument(
         "--output-dir",
@@ -32,18 +39,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_demo(seed: int, horizon: int) -> MarketRunResult:
-    config = default_simulation_config()
-    updated_config = type(config)(
-        simulation_id=config.simulation_id,
-        market=config.market,
-        agents=config.agents,
-        seed=seed,
-        enable_news=config.enable_news,
-        enable_private_signals=config.enable_private_signals,
-        public_tape_enabled=config.public_tape_enabled,
-    )
-    simulator = SyntheticMarketSimulator(updated_config, horizon=horizon)
+def run_demo(*, preset: str = "baseline", seed: int | None = None, horizon: int = 240) -> MarketRunResult:
+    config = build_preset_config(preset)
+    if seed is not None:
+        config = replace(config, seed=int(seed))
+    simulator = SyntheticMarketSimulator(config, horizon=horizon)
     return simulator.run(horizon=horizon)
 
 
@@ -88,7 +88,7 @@ def _write_outputs(result, output_dir: Path, summary_only: bool) -> dict[str, st
 
 def main() -> None:
     args = parse_args()
-    result = run_demo(seed=args.seed, horizon=args.horizon)
+    result = run_demo(preset=args.preset, seed=args.seed, horizon=args.horizon)
     output_dir = Path(args.output_dir)
     paths = _write_outputs(result, output_dir, summary_only=args.summary_only)
     print(json.dumps({"summary": result.summary, "paths": paths}, indent=2))

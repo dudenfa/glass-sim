@@ -17,7 +17,12 @@ from marl_trading.agents import (
     TrendFollowerAgent,
 )
 from marl_trading.analysis import EventLog, EventType, MarketEvent, OrderBookLevel, OrderBookSnapshot, OrderSide, OrderType, summarize_event_log
-from marl_trading.core.config import AgentConfig, MarketConfig, SimulationConfig
+from marl_trading.core.config import (
+    AgentBehaviorConfig,
+    AgentConfig,
+    MarketConfig,
+    SimulationConfig,
+)
 from marl_trading.exchange import ExchangeKernel
 from marl_trading.exchange.models import Order as ExchangeOrder
 from marl_trading.exchange.models import OrderStatus, OrderType as ExchangeOrderType, Side as ExchangeSide
@@ -149,29 +154,99 @@ class SyntheticMarketSimulator:
         # Keep long-running live sessions visibly active without making news too frequent.
         return max(20, min(60, self.horizon // 8))
 
+    def _behavior(self, agent_cfg: AgentConfig) -> AgentBehaviorConfig | None:
+        return agent_cfg.behavior
+
+    def _market_maker_kwargs(self, agent_cfg: AgentConfig) -> dict[str, object]:
+        inventory_anchor = self._starting_inventory(agent_cfg)
+        quote_size = 3
+        quote_padding_ticks = 1
+        behavior = self._behavior(agent_cfg)
+        maker_behavior = behavior.market_maker if behavior is not None else None
+        if maker_behavior is not None:
+            if maker_behavior.inventory_anchor is not None:
+                inventory_anchor = float(maker_behavior.inventory_anchor)
+            if maker_behavior.quote_size is not None:
+                quote_size = int(maker_behavior.quote_size)
+            if maker_behavior.quote_padding_ticks is not None:
+                quote_padding_ticks = int(maker_behavior.quote_padding_ticks)
+        return {
+            "agent_id": agent_cfg.agent_id,
+            "max_resting_orders": agent_cfg.max_resting_orders,
+            "inventory_anchor": inventory_anchor,
+            "quote_size": quote_size,
+            "quote_padding_ticks": quote_padding_ticks,
+        }
+
+    def _noise_trader_kwargs(self, agent_cfg: AgentConfig) -> dict[str, object]:
+        aggressiveness = 0.55
+        market_order_probability = 0.7
+        behavior = self._behavior(agent_cfg)
+        noise_behavior = behavior.noise_trader if behavior is not None else None
+        if noise_behavior is not None:
+            if noise_behavior.aggressiveness is not None:
+                aggressiveness = float(noise_behavior.aggressiveness)
+            if noise_behavior.market_order_probability is not None:
+                market_order_probability = float(noise_behavior.market_order_probability)
+        return {
+            "agent_id": agent_cfg.agent_id,
+            "max_resting_orders": agent_cfg.max_resting_orders,
+            "aggressiveness": aggressiveness,
+            "market_order_probability": market_order_probability,
+        }
+
+    def _trend_follower_kwargs(self, agent_cfg: AgentConfig) -> dict[str, object]:
+        threshold_bps = 1.5
+        market_order_probability = 0.5
+        behavior = self._behavior(agent_cfg)
+        trend_behavior = behavior.trend_follower if behavior is not None else None
+        if trend_behavior is not None:
+            if trend_behavior.threshold_bps is not None:
+                threshold_bps = float(trend_behavior.threshold_bps)
+            if trend_behavior.market_order_probability is not None:
+                market_order_probability = float(trend_behavior.market_order_probability)
+        return {
+            "agent_id": agent_cfg.agent_id,
+            "max_resting_orders": agent_cfg.max_resting_orders,
+            "threshold_bps": threshold_bps,
+            "market_order_probability": market_order_probability,
+        }
+
+    def _informed_trader_kwargs(self, agent_cfg: AgentConfig) -> dict[str, object]:
+        private_signal_strength = agent_cfg.private_signal_strength
+        signal_noise = max(0.05, 0.5 - private_signal_strength * 0.2)
+        news_bias = 1.25
+        threshold_bps = 1.0
+        behavior = self._behavior(agent_cfg)
+        informed_behavior = behavior.informed_trader if behavior is not None else None
+        if informed_behavior is not None:
+            if informed_behavior.private_signal_strength is not None:
+                private_signal_strength = float(informed_behavior.private_signal_strength)
+            if informed_behavior.news_bias is not None:
+                news_bias = float(informed_behavior.news_bias)
+            if informed_behavior.threshold_bps is not None:
+                threshold_bps = float(informed_behavior.threshold_bps)
+        if informed_behavior is not None and informed_behavior.signal_noise is not None:
+            signal_noise = float(informed_behavior.signal_noise)
+        else:
+            signal_noise = max(0.05, 0.5 - private_signal_strength * 0.2)
+        return {
+            "agent_id": agent_cfg.agent_id,
+            "max_resting_orders": agent_cfg.max_resting_orders,
+            "signal_noise": signal_noise,
+            "news_bias": news_bias,
+            "threshold_bps": threshold_bps,
+        }
+
     def _build_agent(self, agent_cfg: AgentConfig) -> ScriptedAgent:
         if agent_cfg.agent_type == "market_maker":
-            return MarketMakerAgent(
-                agent_id=agent_cfg.agent_id,
-                max_resting_orders=agent_cfg.max_resting_orders,
-                inventory_anchor=self._starting_inventory(agent_cfg),
-            )
+            return MarketMakerAgent(**self._market_maker_kwargs(agent_cfg))
         if agent_cfg.agent_type == "noise_trader":
-            return NoiseTraderAgent(
-                agent_id=agent_cfg.agent_id,
-                max_resting_orders=agent_cfg.max_resting_orders,
-            )
+            return NoiseTraderAgent(**self._noise_trader_kwargs(agent_cfg))
         if agent_cfg.agent_type == "trend_follower":
-            return TrendFollowerAgent(
-                agent_id=agent_cfg.agent_id,
-                max_resting_orders=agent_cfg.max_resting_orders,
-            )
+            return TrendFollowerAgent(**self._trend_follower_kwargs(agent_cfg))
         if agent_cfg.agent_type == "informed_trader":
-            return InformedTraderAgent(
-                agent_id=agent_cfg.agent_id,
-                max_resting_orders=agent_cfg.max_resting_orders,
-                signal_noise=max(0.05, 0.5 - agent_cfg.private_signal_strength * 0.2),
-            )
+            return InformedTraderAgent(**self._informed_trader_kwargs(agent_cfg))
         return NoiseTraderAgent(agent_id=agent_cfg.agent_id, max_resting_orders=agent_cfg.max_resting_orders)
 
     def _next_sequence(self) -> int:

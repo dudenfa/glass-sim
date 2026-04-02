@@ -7,6 +7,7 @@ from .events import (
     OrderSide,
     OrderType,
 )
+from .health import MarketHealthSummary, format_market_health_summary, summarize_market_health
 from .replay import ReplayAnnotation, ReplaySeries, build_replay_series, summarize_event_log
 
 
@@ -21,11 +22,14 @@ __all__ = [
     "MarketEvent",
     "OrderBookLevel",
     "OrderBookSnapshot",
+    "MarketHealthSummary",
+    "format_market_health_summary",
     "OrderSide",
     "OrderType",
     "ReplayAnnotation",
     "ReplaySeries",
     "build_replay_series",
     "plot_market_replay",
+    "summarize_market_health",
     "summarize_event_log",
 ]

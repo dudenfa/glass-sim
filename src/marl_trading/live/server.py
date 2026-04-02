@@ -6,13 +6,14 @@ import mimetypes
 import threading
 import webbrowser
 from dataclasses import dataclass
-from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from marl_trading.configs import available_preset_names
+from marl_trading.core.config import SimulationConfig
 from marl_trading.live.session import LiveMarketSession
 
 
@@ -28,6 +29,8 @@ class LiveServerConfig:
     speed: float = 4.0
     autoplay: bool = True
     open_browser: bool = False
+    preset: str = "baseline"
+    simulation_config: SimulationConfig | None = None
 
 
 class _MarketViewHandler(BaseHTTPRequestHandler):
@@ -129,6 +132,7 @@ class MarketViewServer:
     def __init__(self, config: LiveServerConfig) -> None:
         self.config = config
         self.session = LiveMarketSession(
+            config=config.simulation_config,
             horizon=config.horizon,
             step_delay_seconds=1.0 / max(config.speed, 0.1),
             autoplay=False,
@@ -167,6 +171,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serve the local synthetic market live view.")
     parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind.")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind.")
+    parser.add_argument(
+        "--preset",
+        choices=available_preset_names(),
+        default="baseline",
+        help="Named preset from marl_trading.configs.presets.",
+    )
     parser.add_argument("--seed", type=int, default=7, help="Simulation seed.")
     parser.add_argument("--horizon", type=int, default=10_000, help="Number of steps in the live demo session.")
     parser.add_argument("--speed", type=float, default=4.0, help="Playback speed in steps per second.")

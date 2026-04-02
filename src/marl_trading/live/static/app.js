@@ -651,6 +651,7 @@ function renderRecentNews(snapshot) {
 function normalizeBackendState(raw) {
   const session = firstDefined(raw, ["session"], {}) || {};
   const market = firstDefined(raw, ["market"], {}) || {};
+  const summary = firstDefined(raw, ["summary"], {}) || {};
   const candles = toArray(firstDefined(market, ["candles"], firstDefined(raw, ["candles"], [])))
     .map((candle, index) => normalizeCandle(candle, index))
     .filter(Boolean);
@@ -686,8 +687,9 @@ function normalizeBackendState(raw) {
   const portfolios = toArray(firstDefined(raw, ["portfolios", "agents"], []))
     .map(normalizePortfolio)
     .filter(Boolean);
-  const summary = firstDefined(raw, ["summary"], {}) || {};
+  const tradeCount = Number(firstDefined(summary, ["trade_count", "tradeCount", "total_trades"], trades.length));
   const newsCount = Number(firstDefined(summary, ["news_count", "newsCount", "recent_news_count", "news_total"], news.length));
+  const eventCount = Number(firstDefined(summary, ["event_count", "eventCount", "total_events"], trades.length + actions.length));
 
   const latestCandle = candles.at(-1) || null;
   const midpoint = Number(firstDefined(market, ["midpoint", "price", "last_price"], latestCandle?.close ?? lineSeries.at(-1)?.midpoint ?? NaN));
@@ -716,9 +718,9 @@ function normalizeBackendState(raw) {
     portfolios,
     stats: {
       activeAgents: Number(firstDefined(session, ["active_agent_count"], portfolios.filter((portfolio) => portfolio.active).length)),
-      tradeCount: trades.length,
+      tradeCount: Number.isFinite(tradeCount) ? tradeCount : trades.length,
       newsCount: Number.isFinite(newsCount) ? newsCount : news.length,
-      eventCount: Number(firstDefined(raw, ["summary", "event_count"], trades.length + actions.length)),
+      eventCount: Number.isFinite(eventCount) ? eventCount : trades.length + actions.length,
     },
     raw,
   };

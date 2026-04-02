@@ -17,6 +17,41 @@ class MarketConfig:
 
 
 @dataclass(frozen=True)
+class MarketMakerBehaviorConfig:
+    inventory_anchor: float | None = None
+    quote_size: int | None = None
+    quote_padding_ticks: int | None = None
+
+
+@dataclass(frozen=True)
+class NoiseTraderBehaviorConfig:
+    aggressiveness: float | None = None
+    market_order_probability: float | None = None
+
+
+@dataclass(frozen=True)
+class TrendFollowerBehaviorConfig:
+    threshold_bps: float | None = None
+    market_order_probability: float | None = None
+
+
+@dataclass(frozen=True)
+class InformedTraderBehaviorConfig:
+    private_signal_strength: float | None = None
+    signal_noise: float | None = None
+    news_bias: float | None = None
+    threshold_bps: float | None = None
+
+
+@dataclass(frozen=True)
+class AgentBehaviorConfig:
+    market_maker: MarketMakerBehaviorConfig | None = None
+    noise_trader: NoiseTraderBehaviorConfig | None = None
+    trend_follower: TrendFollowerBehaviorConfig | None = None
+    informed_trader: InformedTraderBehaviorConfig | None = None
+
+
+@dataclass(frozen=True)
 class AgentConfig:
     agent_id: AgentId
     agent_type: str
@@ -24,6 +59,7 @@ class AgentConfig:
     ruin_threshold: float
     max_resting_orders: int = 3
     private_signal_strength: float = 0.0
+    behavior: AgentBehaviorConfig | None = None
 
 
 @dataclass(frozen=True)

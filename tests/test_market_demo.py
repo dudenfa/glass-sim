@@ -16,6 +16,13 @@ def test_run_demo_generates_activity_and_summary() -> None:
     assert result.final_portfolios
 
 
+def test_run_demo_supports_named_presets() -> None:
+    result = run_demo(preset="fragile_liquidity", seed=7, horizon=80)
+
+    assert result.summary["snapshot_count"] > 0
+    assert len(result.step_records) == 80
+
+
 def test_demo_outputs_include_world_plot_when_available(tmp_path: Path) -> None:
     result = run_demo(seed=7, horizon=80)
     paths = _write_outputs(result, tmp_path, summary_only=False)

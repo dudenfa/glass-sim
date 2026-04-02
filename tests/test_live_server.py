@@ -11,12 +11,14 @@ def test_live_server_defaults_are_long_running() -> None:
     config = LiveServerConfig()
     assert config.horizon == 10_000
     assert config.autoplay is True
+    assert config.preset == "baseline"
 
 
 def test_live_server_cli_defaults_to_long_running_horizon(monkeypatch) -> None:
     monkeypatch.setattr(sys, "argv", ["serve_market_view.py"])
     args = parse_args()
     assert args.horizon == 10_000
+    assert args.preset == "baseline"
 
 
 def test_live_server_endpoints() -> None:

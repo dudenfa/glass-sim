@@ -70,6 +70,7 @@ def test_live_ui_assets_exist() -> None:
     assert "resolveChartFocus" in app_js
     assert "renderChartPrice" in app_js
     assert "newsCount" in app_js
+    assert 'firstDefined(summary, ["trade_count", "tradeCount", "total_trades"], trades.length)' in app_js
     assert 'rows(asks, "ask", ORDER_BOOK_TOP_LEVELS, "bottom")' in app_js
     assert 'rows(fullAsks, "ask", ORDER_BOOK_FULL_LEVELS, "bottom")' in app_js
     assert "xOffset = xSlots - visibleSeries.length" in app_js
