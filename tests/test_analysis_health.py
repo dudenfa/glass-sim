@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
-from marl_trading.analysis import EventLog, EventType, MarketEvent, OrderBookLevel, OrderBookSnapshot, OrderSide, summarize_market_health
+from marl_trading.analysis import (
+    EventLog,
+    EventType,
+    MarketEvent,
+    OrderBookLevel,
+    OrderBookSnapshot,
+    OrderSide,
+    build_agent_health_metrics,
+    build_portfolio_health_rows,
+    format_portfolio_health_breakdown,
+    summarize_market_health,
+)
 
 
 def build_sample_log() -> EventLog:
@@ -128,3 +140,90 @@ def test_summarize_market_health_from_run_result_uses_step_count() -> None:
     assert summary.final_fundamental == pytest.approx(100.1)
     assert summary.final_total_equity == pytest.approx(100_250.0)
     assert summary.to_dict()["trade_count"] == 1
+
+
+def test_build_portfolio_health_rows_uses_starting_inventory_by_agent_type() -> None:
+    final_portfolios = {
+        "maker_01": {
+            "cash": 10_144.67,
+            "inventory": 39.0,
+            "equity": 14_571.41,
+            "free_equity": 13_891.19,
+            "status": "active",
+            "deactivated_reason": None,
+            "deactivated_at_ns": None,
+        }
+    }
+    agent_configs = [
+        SimpleNamespace(
+            agent_id="maker_01",
+            agent_type="market_maker",
+            starting_cash=10_000.0,
+            ruin_threshold=4_000.0,
+        )
+    ]
+
+    rows = build_portfolio_health_rows(final_portfolios, agent_configs, starting_midpoint=100.0)
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.agent_id == "maker_01"
+    assert row.agent_type == "market_maker"
+    assert row.starting_cash == pytest.approx(10_000.0)
+    assert row.starting_inventory == pytest.approx(40.0)
+    assert row.starting_equity == pytest.approx(14_000.0)
+    assert row.starting_free_equity == pytest.approx(14_000.0)
+    assert row.ending_cash == pytest.approx(10_144.67)
+    assert row.ending_inventory == pytest.approx(39.0)
+    assert row.ending_equity == pytest.approx(14_571.41)
+    assert row.total_pnl == pytest.approx(571.41)
+    assert row.active is True
+
+
+def test_build_agent_health_metrics_tracks_realized_and_unrealized_pnl() -> None:
+    log = build_sample_log()
+    agent_configs = [
+        SimpleNamespace(agent_id="maker_1", agent_type="market_maker", starting_cash=10_000.0, ruin_threshold=4_000.0),
+        SimpleNamespace(agent_id="taker_1", agent_type="noise_trader", starting_cash=10_000.0, ruin_threshold=4_000.0),
+    ]
+
+    metrics = build_agent_health_metrics(
+        list(log.events),
+        agent_configs,
+        starting_midpoint=100.0,
+        final_mark_price=100.0,
+        open_orders_by_agent={"maker_1": 2},
+    )
+
+    assert metrics["maker_1"]["realized_pnl"] == pytest.approx(0.0)
+    assert metrics["maker_1"]["unrealized_pnl"] == pytest.approx(0.0)
+    assert metrics["maker_1"]["open_orders"] == 2
+    assert metrics["taker_1"]["realized_pnl"] == pytest.approx(0.0)
+    assert metrics["taker_1"]["unrealized_pnl"] == pytest.approx(0.0)
+    assert metrics["taker_1"]["open_orders"] == 0
+
+
+def test_format_portfolio_health_breakdown_is_readable() -> None:
+    rows = [
+        build_portfolio_health_rows(
+            {
+                "retail_01": {
+                    "cash": 10_968.88,
+                    "inventory": 10.0,
+                    "equity": 12_103.94,
+                    "free_equity": 11_991.22,
+                    "status": "active",
+                }
+            },
+            [SimpleNamespace(agent_id="retail_01", agent_type="noise_trader", starting_cash=10_000.0, ruin_threshold=4_000.0)],
+            starting_midpoint=100.0,
+        )[0]
+    ]
+
+    report = format_portfolio_health_breakdown(rows)
+
+    assert report.startswith("portfolio_breakdown:")
+    assert "retail_01" in report
+    assert "cash 10000.00 -> 10968.88" in report
+    assert "inventory 20.00 -> 10.00" in report
+    assert "open orders n/a" in report

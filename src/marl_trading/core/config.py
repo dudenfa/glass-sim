@@ -14,6 +14,8 @@ class MarketConfig:
     initial_spread: float = 0.02
     max_order_levels: int = 10
     event_horizon: int = 10_000
+    news_impact_scale: float = 0.6
+    fundamental_news_sensitivity: float = 0.9
 
 
 @dataclass(frozen=True)

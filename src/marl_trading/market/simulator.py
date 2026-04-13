@@ -132,8 +132,14 @@ class SyntheticMarketSimulator:
         self.step_records = []
         self.price_history: list[float] = []
         self.fundamental_history: list[float] = []
-        self.fundamental = FundamentalProcess(current_value=self.start_midpoint)
-        self.news_process = PublicNewsProcess(interval_steps=self._news_interval_steps())
+        self.fundamental = FundamentalProcess(
+            current_value=self.start_midpoint,
+            news_sensitivity=float(self.market_config.fundamental_news_sensitivity),
+        )
+        self.news_process = PublicNewsProcess(
+            interval_steps=self._news_interval_steps(),
+            impact_scale=float(self.market_config.news_impact_scale),
+        )
         self._simulation_started = False
         self._simulation_finished = False
         self._session_start_logged = False

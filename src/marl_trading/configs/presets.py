@@ -60,14 +60,16 @@ def high_news_preset() -> SimulationConfig:
     return _with_agent_updates(
         _with_market(
             replace(base, seed=11),
-            event_horizon=320,
+            news_impact_scale=1.1,
+            fundamental_news_sensitivity=1.35,
         ),
         {
             "informed_01": {
                 "behavior": AgentBehaviorConfig(
                     informed_trader=InformedTraderBehaviorConfig(
-                        news_bias=1.45,
-                        threshold_bps=0.85,
+                        news_bias=2.1,
+                        signal_noise=0.08,
+                        threshold_bps=0.7,
                     )
                 )
             }
@@ -82,7 +84,6 @@ def fragile_liquidity_preset() -> SimulationConfig:
             replace(base, seed=13),
             initial_spread=0.06,
             max_order_levels=4,
-            event_horizon=1_200,
         ),
         {
             "maker_01": {
@@ -188,7 +189,7 @@ PRESETS: Final[dict[str, PresetDefinition]] = {
     ),
     "high_news": PresetDefinition(
         name="high_news",
-        description="Shorter horizon with a denser news cadence.",
+        description="News-sensitive market with stronger reactions to public shocks.",
         build=high_news_preset,
     ),
     "fragile_liquidity": PresetDefinition(

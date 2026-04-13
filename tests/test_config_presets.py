@@ -51,14 +51,18 @@ def test_preset_differences_are_intentional() -> None:
     fragile = build_preset_config("fragile_liquidity")
     high_info = build_preset_config("high_information_asymmetry")
 
-    assert high_news.market.event_horizon < baseline.market.event_horizon
+    assert high_news.market.event_horizon == baseline.market.event_horizon
     assert high_news.enable_news is True
+    assert high_news.market.news_impact_scale > baseline.market.news_impact_scale
+    assert high_news.market.fundamental_news_sensitivity > baseline.market.fundamental_news_sensitivity
     high_news_informed = next(agent for agent in high_news.agents if agent.agent_id.value == "informed_01")
     assert isinstance(high_news_informed.behavior, AgentBehaviorConfig)
     assert isinstance(high_news_informed.behavior.informed_trader, InformedTraderBehaviorConfig)
-    assert high_news_informed.behavior.informed_trader.news_bias == 1.45
-    assert high_news_informed.behavior.informed_trader.threshold_bps == 0.85
+    assert high_news_informed.behavior.informed_trader.news_bias == 2.1
+    assert high_news_informed.behavior.informed_trader.signal_noise == 0.08
+    assert high_news_informed.behavior.informed_trader.threshold_bps == 0.7
 
+    assert fragile.market.event_horizon == baseline.market.event_horizon
     assert fragile.market.max_order_levels < baseline.market.max_order_levels
     assert fragile.market.initial_spread > baseline.market.initial_spread
     fragile_maker = next(agent for agent in fragile.agents if agent.agent_id.value == "maker_01")

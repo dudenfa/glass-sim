@@ -34,3 +34,6 @@ market_demo_output/
 
 # Misc local logs
 *.log
+
+# Personal documents
+documents/

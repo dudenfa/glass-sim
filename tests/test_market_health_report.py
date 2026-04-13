@@ -49,3 +49,28 @@ def test_build_market_health_report_uses_named_preset() -> None:
     assert "preset=high_news" in payload["report"]
     assert "events=" in payload["report"]
     assert "final_total_equity=" in payload["report"]
+
+
+def test_build_market_health_report_can_include_portfolio_breakdown() -> None:
+    payload = build_market_health_report("baseline", seed=7, horizon=24, portfolio_breakdown=True)
+
+    assert payload["portfolio_breakdown"]
+    first_row = payload["portfolio_breakdown"][0]
+    assert first_row.agent_id
+    assert first_row.starting_cash >= 0
+    assert first_row.ending_cash >= 0
+    assert first_row.starting_free_equity is not None
+    assert "portfolio_breakdown:" in payload["report"]
+    assert "open orders" in payload["report"]
+
+
+def test_build_market_health_report_can_include_portfolio_breakdown() -> None:
+    payload = build_market_health_report("baseline", seed=7, horizon=24, portfolio_breakdown=True)
+
+    assert payload["portfolio_breakdown"] is not None
+    assert len(payload["portfolio_breakdown"]) > 0
+    assert "portfolio_breakdown:" in payload["report"]
+    first_row = payload["portfolio_breakdown"][0].to_dict()
+    assert "agent_id" in first_row
+    assert "starting_cash" in first_row
+    assert "ending_equity" in first_row
