@@ -31,6 +31,9 @@ class LiveServerConfig:
     open_browser: bool = False
     preset: str = "baseline"
     simulation_config: SimulationConfig | None = None
+    checkpoint_path: Path | None = None
+    learning_agent_id: str | None = None
+    learning_agent_starting_inventory: float = 0.0
 
 
 class _MarketViewHandler(BaseHTTPRequestHandler):
@@ -136,6 +139,9 @@ class MarketViewServer:
             horizon=config.horizon,
             step_delay_seconds=1.0 / max(config.speed, 0.1),
             autoplay=False,
+            checkpoint_path=config.checkpoint_path,
+            learning_agent_id=config.learning_agent_id,
+            learning_agent_starting_inventory=config.learning_agent_starting_inventory,
         )
         self.httpd = _ReusableThreadingHTTPServer((config.host, config.port), _MarketViewHandler)
         self.httpd.market_server = self  # type: ignore[attr-defined]
@@ -182,4 +188,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--speed", type=float, default=4.0, help="Playback speed in steps per second.")
     parser.add_argument("--paused", action="store_true", help="Start paused instead of autoplaying.")
     parser.add_argument("--open-browser", action="store_true", help="Open the viewer in the default browser.")
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help="Optional PPO checkpoint to use for runtime control of one agent slot.",
+    )
+    parser.add_argument(
+        "--learning-agent-id",
+        default=None,
+        help="Agent id replaced at runtime by the PPO policy when --checkpoint is provided.",
+    )
+    parser.add_argument(
+        "--learning-agent-starting-inventory",
+        type=float,
+        default=0.0,
+        help="Starting inventory for the runtime-replaced PPO slot only.",
+    )
     return parser.parse_args()

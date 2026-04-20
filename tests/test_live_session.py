@@ -1,8 +1,19 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from marl_trading.live.session import LiveMarketSession
+
+
+class _FakePPOModel:
+    def __init__(self, action=(0, 0, 0)) -> None:
+        self.action = action
+        self.predict_calls = 0
+
+    def predict(self, observation, deterministic=True):  # noqa: ARG002
+        self.predict_calls += 1
+        return self.action, None
 
 
 def test_live_session_steps_and_state() -> None:
@@ -56,9 +67,9 @@ def test_live_session_tape_accumulates_across_snapshot_window() -> None:
         session.step()
 
     state = session.state()
-    assert len(state["tape"]) == state["summary"]["trade_count"]
+    assert state["summary"]["trade_count"] > 1
+    assert len(state["tape"]) == len(state["recent_trades"]) == 1
     assert len(state["recent_trades"]) == len(state["tape"])
-    assert len(state["tape"]) > 1
 
 
 def test_live_session_bounded_history_window_preserves_step_indices() -> None:
@@ -142,3 +153,58 @@ def test_live_session_reset_restores_initial_state() -> None:
     assert reset_state["session"]["step_index"] == 0
     assert reset_state["session"]["reset_count"] >= 1
     assert reset_state["session"]["status"] == "paused"
+
+
+def test_live_session_runtime_ppo_replaces_requested_slot(monkeypatch) -> None:
+    fake_model = _FakePPOModel()
+    monkeypatch.setattr(LiveMarketSession, "_load_ppo_model", lambda self, path: fake_model)
+
+    session = LiveMarketSession(
+        horizon=12,
+        autoplay=False,
+        step_delay_seconds=0.01,
+        checkpoint_path=Path("/tmp/fake_model.zip"),
+        learning_agent_id="trend_01",
+    )
+    state = session.state()
+    trend_state = next(agent for agent in state["agents"] if agent["agent_id"] == "trend_01")
+
+    assert trend_state["agent_type"] == "rl_agent"
+    for _ in range(6):
+        session.step()
+        if fake_model.predict_calls >= 1:
+            break
+    assert fake_model.predict_calls >= 1
+
+
+def test_live_session_runtime_ppo_can_override_starting_inventory(monkeypatch) -> None:
+    fake_model = _FakePPOModel()
+    monkeypatch.setattr(LiveMarketSession, "_load_ppo_model", lambda self, path: fake_model)
+
+    session = LiveMarketSession(
+        horizon=12,
+        autoplay=False,
+        step_delay_seconds=0.01,
+        checkpoint_path=Path("/tmp/fake_model.zip"),
+        learning_agent_id="trend_01",
+        learning_agent_starting_inventory=0.0,
+    )
+    state = session.state()
+    trend_state = next(agent for agent in state["agents"] if agent["agent_id"] == "trend_01")
+
+    assert trend_state["inventory"] == 0.0
+    assert state["session"]["runtime_policy"]["learning_agent_starting_inventory"] == 0.0
+
+
+def test_live_session_requires_learning_agent_id_when_checkpoint_enabled() -> None:
+    try:
+        LiveMarketSession(
+            horizon=12,
+            autoplay=False,
+            step_delay_seconds=0.01,
+            checkpoint_path=Path("/tmp/fake_model.zip"),
+        )
+    except ValueError as exc:
+        assert "learning_agent_id" in str(exc)
+    else:  # pragma: no cover - defensive
+        raise AssertionError("Expected ValueError when checkpoint is provided without learning_agent_id.")

@@ -33,6 +33,7 @@ const els = {
   newsFeed: document.getElementById("newsFeed"),
   marketStats: document.getElementById("marketStats"),
   agentSummary: document.getElementById("agentSummary"),
+  rlDiagnostics: document.getElementById("rlDiagnostics"),
   priceChart: document.getElementById("priceChart"),
   chartModeCandles: document.getElementById("chartModeCandles"),
   chartModeLine: document.getElementById("chartModeLine"),
@@ -687,6 +688,20 @@ function normalizeBackendState(raw) {
   const portfolios = toArray(firstDefined(raw, ["portfolios", "agents"], []))
     .map(normalizePortfolio)
     .filter(Boolean);
+  const rlDiagnostics = toArray(firstDefined(raw, ["rl_diagnostics"], [])).map((item) => ({
+    agentId: String(firstDefined(item, ["agent_id", "agentId"], "—")),
+    decisionCount: Number(firstDefined(item, ["decision_count", "decisionCount"], 0)),
+    actionCounts: firstDefined(item, ["action_counts", "actionCounts"], {}) || {},
+    lastActionType: String(firstDefined(item, ["last_action_type", "lastActionType"], "")),
+    lastFailureReason: String(firstDefined(item, ["last_failure_reason", "lastFailureReason"], "")),
+    openOrders: Number(firstDefined(item, ["open_orders", "openOrders"], 0)),
+    inventory: Number(firstDefined(item, ["inventory"], NaN)),
+    cash: Number(firstDefined(item, ["cash"], NaN)),
+    equity: Number(firstDefined(item, ["equity"], NaN)),
+    realizedPnl: Number(firstDefined(item, ["realized_pnl", "realizedPnl"], 0)),
+    unrealizedPnl: Number(firstDefined(item, ["unrealized_pnl", "unrealizedPnl"], 0)),
+    recentOrderEvents: normalizeLatestOrders(firstDefined(item, ["recent_order_events", "recentOrderEvents"], [])),
+  }));
   const tradeCount = Number(firstDefined(summary, ["trade_count", "tradeCount", "total_trades"], trades.length));
   const newsCount = Number(firstDefined(summary, ["news_count", "newsCount", "recent_news_count", "news_total"], news.length));
   const eventCount = Number(firstDefined(summary, ["event_count", "eventCount", "total_events"], trades.length + actions.length));
@@ -716,6 +731,7 @@ function normalizeBackendState(raw) {
     actions,
     news,
     portfolios,
+    rlDiagnostics,
     stats: {
       activeAgents: Number(firstDefined(session, ["active_agent_count"], portfolios.filter((portfolio) => portfolio.active).length)),
       tradeCount: Number.isFinite(tradeCount) ? tradeCount : trades.length,
@@ -1315,6 +1331,85 @@ function renderAgentSummary(snapshot) {
     .join("");
 }
 
+function renderRlDiagnostics(snapshot) {
+  if (!els.rlDiagnostics) return;
+  const diagnostics = toArray(snapshot.rlDiagnostics || []);
+  if (!diagnostics.length) {
+    els.rlDiagnostics.innerHTML = "";
+    return;
+  }
+
+  const content = diagnostics.map((entry) => {
+    const actionCounts = entry.actionCounts || {};
+    const total = Math.max(1, Number(entry.decisionCount || 0));
+    const holdCount = Number(actionCounts.hold || 0);
+    const marketCount = Number(actionCounts.market_buy || 0) + Number(actionCounts.market_sell || 0);
+    const limitCount = Number(actionCounts.limit_buy || 0) + Number(actionCounts.limit_sell || 0);
+    const cancelCount = Number(actionCounts.cancel_oldest || 0);
+    const rows = entry.recentOrderEvents?.length
+      ? entry.recentOrderEvents.slice(-8).slice().reverse().map((action) => `
+          <article class="rl-action-row">
+            <span class="rl-action-time">${escapeHtml(fmtTime(action.time))}</span>
+            <span class="rl-action-type">${escapeHtml(fmtLatestOrderType(action))}</span>
+            <span class="rl-action-detail">${escapeHtml(fmtCompactOrderDetail(action))}</span>
+          </article>
+        `).join("")
+      : `<div class="empty-state compact">No RL order events yet. If decisions are happening, the agent may be holding.</div>`;
+
+    return `
+      <section class="rl-diagnostic-card">
+        <div class="rl-diagnostic-head">
+          <div>
+            <p class="panel-kicker">RL agent</p>
+            <h3>${escapeHtml(entry.agentId)}</h3>
+          </div>
+          <div class="rl-diagnostic-summary">
+            <span class="panel-tag">decisions ${escapeHtml(String(entry.decisionCount))}</span>
+            <span class="panel-tag">last ${escapeHtml(entry.lastActionType || "none")}</span>
+          </div>
+        </div>
+        <div class="rl-diagnostic-stats">
+          <div class="summary-card">
+            <span>Hold</span>
+            <strong>${escapeHtml(String(holdCount))} <small>${fmtNumber((holdCount / total) * 100, 0)}%</small></strong>
+          </div>
+          <div class="summary-card">
+            <span>Market</span>
+            <strong>${escapeHtml(String(marketCount))}</strong>
+          </div>
+          <div class="summary-card">
+            <span>Limit</span>
+            <strong>${escapeHtml(String(limitCount))}</strong>
+          </div>
+          <div class="summary-card">
+            <span>Cancel</span>
+            <strong>${escapeHtml(String(cancelCount))}</strong>
+          </div>
+          <div class="summary-card">
+            <span>Inventory</span>
+            <strong>${fmtQty(entry.inventory)}</strong>
+          </div>
+          <div class="summary-card">
+            <span>Open orders</span>
+            <strong>${escapeHtml(String(entry.openOrders))}</strong>
+          </div>
+        </div>
+        ${entry.lastFailureReason ? `<div class="portfolio-note">policy note: ${escapeHtml(entry.lastFailureReason)}</div>` : ""}
+        <div class="rl-diagnostic-list">
+          <div class="latest-orders-columns rl-action-columns" aria-hidden="true">
+            <span class="order-col-time">Time</span>
+            <span class="order-col-chip">Type</span>
+            <span class="order-col-detail">Detail</span>
+          </div>
+          ${rows}
+        </div>
+      </section>
+    `;
+  }).join("");
+
+  els.rlDiagnostics.innerHTML = content;
+}
+
 function renderOrderBook(snapshot) {
   const book = snapshot.fullOrderBook || snapshot.orderBook || { bids: [], asks: [], fullBids: [], fullAsks: [] };
   const bids = [...(book.bids || [])].sort((left, right) => right.price - left.price).slice(0, ORDER_BOOK_TOP_LEVELS);
@@ -1773,6 +1868,7 @@ function renderSnapshot(snapshot, { force = false } = {}) {
   renderTrades(snapshot);
   renderLatestOrders(snapshot);
   renderAgentSummary(snapshot);
+  renderRlDiagnostics(snapshot);
   renderActions(snapshot);
   renderPortfolios(snapshot);
   updateModeButtons();

@@ -43,10 +43,18 @@ python3 -m pip install -r requirements.txt
 Notes:
 - `numpy` is required by the simulator and live viewer
 - `Pillow` is used for the saved world/replay images
+- `gymnasium` and `stable-baselines3` are included for the first PPO experiment
+- the first install may take longer now because `stable-baselines3` pulls in CPU `torch`
 - for optional test/development tools:
 
   ```bash
   python3 -m pip install -e ".[dev]"
+  ```
+
+- for editable RL work:
+
+  ```bash
+  python3 -m pip install -e ".[rl,dev]"
   ```
 
 - `pytest` is included by `.[dev]`
@@ -93,6 +101,24 @@ PYTHONPATH=src python3 scripts/replay_market.py artifacts/demo_seed7_h240/market
 
 ```bash
 PYTHONPATH=src pytest
+```
+
+## RL Groundwork
+
+The repo now includes the first single-agent RL boundary in:
+- `src/marl_trading/rl/boundary.py`
+- `src/marl_trading/rl/env.py`
+
+Current status:
+- one learning-controlled agent can already be inserted into the scripted market
+- the environment exposes a compact vector observation and a small discrete action set
+- PPO dependencies are installed with `requirements.txt` or `.[rl]`
+- the actual PPO training/evaluation scripts are the next implementation step
+
+Quick smoke check:
+
+```bash
+PYTHONPATH=src python3 -c "from marl_trading.rl import RLAction, RLActionType, SingleAgentMarketEnv; env = SingleAgentMarketEnv(); obs = env.reset(seed=7, horizon=32); print('obs_dim=', len(obs)); _, reward, done, info = env.step(RLAction(RLActionType.HOLD)); print('reward=', round(reward, 4), 'done=', done, 'step=', info['step_index'])"
 ```
 
 ## Project Layout

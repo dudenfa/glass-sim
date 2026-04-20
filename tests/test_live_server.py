@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from urllib.request import Request, urlopen
 
+import pytest
+
 from marl_trading.live.server import LiveServerConfig, parse_args, serve_market_view
+from marl_trading.live.session import LiveMarketSession
 
 
 def test_live_server_defaults_are_long_running() -> None:
@@ -21,10 +25,31 @@ def test_live_server_cli_defaults_to_long_running_horizon(monkeypatch) -> None:
     assert args.preset == "baseline"
 
 
-def test_live_server_endpoints() -> None:
-    server = serve_market_view(
-        LiveServerConfig(host="127.0.0.1", port=0, horizon=10, speed=10.0, autoplay=False),
+def test_live_server_cli_parses_runtime_rl_flags(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "serve_market_view.py",
+            "--checkpoint",
+            "checkpoints/ppo_baseline_trend_01.zip",
+            "--learning-agent-id",
+            "trend_01",
+        ],
     )
+    args = parse_args()
+    assert args.checkpoint == Path("checkpoints/ppo_baseline_trend_01.zip")
+    assert args.learning_agent_id == "trend_01"
+    assert args.learning_agent_starting_inventory == 0.0
+
+
+def test_live_server_endpoints() -> None:
+    try:
+        server = serve_market_view(
+            LiveServerConfig(host="127.0.0.1", port=0, horizon=10, speed=10.0, autoplay=False),
+        )
+    except PermissionError as exc:  # pragma: no cover - sandbox-dependent
+        pytest.skip(f"Socket binding is not permitted in this environment: {exc}")
     try:
         base_url = server.url
         with urlopen(f"{base_url}/app.js", timeout=5) as response:
@@ -51,5 +76,31 @@ def test_live_server_endpoints() -> None:
         with urlopen(request, timeout=5) as response:
             speed_state = json.loads(response.read().decode("utf-8"))
         assert speed_state["session"]["steps_per_second"] == 2.0
+    finally:
+        server.stop()
+
+
+def test_live_server_passes_runtime_rl_config_into_session(monkeypatch) -> None:
+    fake_model = object()
+    monkeypatch.setattr(LiveMarketSession, "_load_ppo_model", lambda self, path: fake_model)
+
+    try:
+        server = serve_market_view(
+            LiveServerConfig(
+                host="127.0.0.1",
+                port=0,
+                horizon=10,
+                speed=10.0,
+                autoplay=False,
+                checkpoint_path=Path("/tmp/fake_model.zip"),
+                learning_agent_id="trend_01",
+            ),
+        )
+    except PermissionError as exc:  # pragma: no cover - sandbox-dependent
+        pytest.skip(f"Socket binding is not permitted in this environment: {exc}")
+    try:
+        state = server.session.state()
+        trend_state = next(agent for agent in state["agents"] if agent["agent_id"] == "trend_01")
+        assert trend_state["agent_type"] == "rl_agent"
     finally:
         server.stop()

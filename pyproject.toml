@@ -10,10 +10,17 @@ readme = "THESIS.md"
 requires-python = ">=3.9"
 license = {text = "Proprietary"}
 authors = [{name = "Codex"}]
-dependencies = []
+dependencies = [
+    "numpy>=1.26",
+    "Pillow>=10.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+rl = [
+    "gymnasium>=0.29,<1.0",
+    "stable-baselines3>=2.3,<3.0",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -23,4 +30,4 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = [".", "src"]

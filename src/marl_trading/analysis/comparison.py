@@ -176,11 +176,14 @@ def _extract_agent_map(payload: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             continue
 
         if isinstance(raw_agents, Mapping):
-            return {
+            extracted = {
                 str(agent_id): dict(agent_payload)
                 for agent_id, agent_payload in raw_agents.items()
                 if isinstance(agent_payload, Mapping)
             }
+            if extracted:
+                return extracted
+            continue
 
         if isinstance(raw_agents, list):
             agents: dict[str, dict[str, Any]] = {}
@@ -198,7 +201,8 @@ def _extract_agent_map(payload: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
                     continue
                 agent_id = str(item_mapping.get("agent_id") or item_mapping.get("id") or item_mapping.get("name") or f"agent_{index}")
                 agents[agent_id] = item_mapping
-            return agents
+            if agents:
+                return agents
 
     return {}
 
@@ -208,7 +212,7 @@ def load_market_run(source: str | Path | Mapping[str, Any]) -> RunSnapshot:
     preset = payload.get("preset")
     seed = payload.get("seed")
     horizon = payload.get("horizon")
-    label = str(preset or payload.get("label") or payload.get("name") or "run")
+    label = str(payload.get("label") or preset or payload.get("name") or "run")
 
     return RunSnapshot(
         label=label,

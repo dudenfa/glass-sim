@@ -1,0 +1,18 @@
+{
+  "batch_size": 64,
+  "checkpoint": "/Users/dude/Desktop/uni/tirocinio/marl-trading/checkpoints/ppo_baseline_trend_01.zip",
+  "description": "Default balanced market with the current simulator settings.",
+  "device": "auto",
+  "gamma": 0.99,
+  "horizon": 1000,
+  "learning_agent_id": "trend_01",
+  "learning_rate": 0.0003,
+  "max_price_offset_ticks": 3,
+  "max_quantity": 3,
+  "n_steps": 256,
+  "preset": "baseline",
+  "reward_inventory_penalty": 0.0,
+  "runtime_slot_replacement": true,
+  "seed": 7,
+  "total_timesteps": 5000
+}

@@ -154,6 +154,21 @@ def test_load_market_run_from_json_file(tmp_path) -> None:
     assert snapshot.raw["preset"] == "baseline"
 
 
+def test_load_market_run_prefers_explicit_label_over_preset() -> None:
+    snapshot = load_market_run(
+        {
+            "preset": "baseline",
+            "label": "baseline_rl",
+            "seed": 7,
+            "horizon": 64,
+            "summary": {"trade_count": 10},
+        }
+    )
+
+    assert snapshot.preset == "baseline"
+    assert snapshot.label == "baseline_rl"
+
+
 def test_compare_market_runs_accepts_direct_portfolio_breakdown_rows() -> None:
     left = {
         "preset": "baseline",

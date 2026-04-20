@@ -1,2 +1,4 @@
-numpy
-Pillow
+numpy>=1.26
+Pillow>=10.0
+gymnasium>=0.29,<1.0
+stable-baselines3>=2.3,<3.0
