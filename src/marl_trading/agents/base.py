@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import Iterable, Optional
 
 from marl_trading.exchange.models import OrderType, Side
 
@@ -57,8 +56,8 @@ class ScriptedAgent(ABC):
     def bootstrap(self, observation: MarketObservation, rng) -> tuple[OrderIntent, ...]:
         return ()
 
-    def decide(self, observation: MarketObservation, rng) -> Optional[OrderIntent]:
-        return None
+    def decide(self, observation: MarketObservation, rng) -> tuple[OrderIntent, ...]:
+        return ()
 
 
 def _midpoint_or_fallback(observation: MarketObservation) -> float:
@@ -72,4 +71,3 @@ def _clamp_price(price: float, tick_size: float) -> float:
         raise ValueError("tick_size must be positive.")
     rounded = round(price / tick_size) * tick_size
     return max(tick_size, float(rounded))
-

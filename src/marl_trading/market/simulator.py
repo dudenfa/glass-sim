@@ -169,6 +169,14 @@ class SyntheticMarketSimulator:
         inventory_anchor = self._starting_inventory(agent_cfg)
         quote_size = 3
         quote_padding_ticks = 1
+        inventory_tolerance: float | None = None
+        min_quote_size: int | None = None
+        max_quote_size: int | None = None
+        bid_padding_ticks: int | None = None
+        ask_padding_ticks: int | None = None
+        inventory_skew_strength = 0.75
+        inventory_size_decay = 0.5
+        empty_side_padding_ticks = 1
         behavior = self._behavior(agent_cfg)
         maker_behavior = behavior.market_maker if behavior is not None else None
         if maker_behavior is not None:
@@ -178,12 +186,36 @@ class SyntheticMarketSimulator:
                 quote_size = int(maker_behavior.quote_size)
             if maker_behavior.quote_padding_ticks is not None:
                 quote_padding_ticks = int(maker_behavior.quote_padding_ticks)
+            if maker_behavior.inventory_tolerance is not None:
+                inventory_tolerance = float(maker_behavior.inventory_tolerance)
+            if maker_behavior.min_quote_size is not None:
+                min_quote_size = int(maker_behavior.min_quote_size)
+            if maker_behavior.max_quote_size is not None:
+                max_quote_size = int(maker_behavior.max_quote_size)
+            if maker_behavior.bid_padding_ticks is not None:
+                bid_padding_ticks = int(maker_behavior.bid_padding_ticks)
+            if maker_behavior.ask_padding_ticks is not None:
+                ask_padding_ticks = int(maker_behavior.ask_padding_ticks)
+            if maker_behavior.inventory_skew_strength is not None:
+                inventory_skew_strength = float(maker_behavior.inventory_skew_strength)
+            if maker_behavior.inventory_size_decay is not None:
+                inventory_size_decay = float(maker_behavior.inventory_size_decay)
+            if maker_behavior.empty_side_padding_ticks is not None:
+                empty_side_padding_ticks = int(maker_behavior.empty_side_padding_ticks)
         return {
             "agent_id": agent_cfg.agent_id,
             "max_resting_orders": agent_cfg.max_resting_orders,
             "inventory_anchor": inventory_anchor,
             "quote_size": quote_size,
             "quote_padding_ticks": quote_padding_ticks,
+            "inventory_tolerance": inventory_tolerance,
+            "min_quote_size": min_quote_size,
+            "max_quote_size": max_quote_size,
+            "bid_padding_ticks": bid_padding_ticks,
+            "ask_padding_ticks": ask_padding_ticks,
+            "inventory_skew_strength": inventory_skew_strength,
+            "inventory_size_decay": inventory_size_decay,
+            "empty_side_padding_ticks": empty_side_padding_ticks,
         }
 
     def _noise_trader_kwargs(self, agent_cfg: AgentConfig) -> dict[str, object]:
@@ -436,6 +468,19 @@ class SyntheticMarketSimulator:
         if intent.limit_price is not None:
             return float(intent.limit_price)
         return float(midpoint)
+
+    def _normalize_intents(self, intents: object) -> tuple[OrderIntent, ...]:
+        if intents is None:
+            return ()
+        if isinstance(intents, OrderIntent):
+            return (intents,)
+        if isinstance(intents, tuple):
+            return tuple(intent for intent in intents if intent is not None)
+        if isinstance(intents, list):
+            return tuple(intent for intent in intents if intent is not None)
+        if isinstance(intents, Iterable):
+            return tuple(intent for intent in intents if intent is not None)
+        raise TypeError(f"Unsupported agent decision type: {type(intents)!r}")
 
     def _submit_intent(
         self,
@@ -703,8 +748,8 @@ class SyntheticMarketSimulator:
             portfolio=chosen_portfolio,
             snapshot=snapshot,
         )
-        intent = chosen_agent.decide(observation, self.rng)
-        if intent is not None:
+        intents = self._normalize_intents(chosen_agent.decide(observation, self.rng))
+        for intent in intents:
             self._submit_intent(
                 agent_id=chosen_agent_id,
                 intent=intent,

@@ -23,6 +23,14 @@ class MarketMakerBehaviorConfig:
     inventory_anchor: float | None = None
     quote_size: int | None = None
     quote_padding_ticks: int | None = None
+    inventory_tolerance: float | None = None
+    min_quote_size: int | None = None
+    max_quote_size: int | None = None
+    bid_padding_ticks: int | None = None
+    ask_padding_ticks: int | None = None
+    inventory_skew_strength: float | None = None
+    inventory_size_decay: float | None = None
+    empty_side_padding_ticks: int | None = None
 
 
 @dataclass(frozen=True)

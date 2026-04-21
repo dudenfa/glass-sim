@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from marl_trading.agents.base import OrderIntent
+from marl_trading.agents.base import MarketObservation, OrderIntent, ScriptedAgent
 from marl_trading.analysis import EventLog, EventType, summarize_event_log
 from marl_trading.configs.defaults import default_simulation_config
 from marl_trading.exchange.models import OrderType, Side
@@ -74,3 +74,44 @@ def test_synthetic_market_settles_trades_using_currency_prices() -> None:
     assert maker_after.cash > 10_000.0
     assert retail_after.active is True
     assert maker_after.active is True
+
+
+def test_simulator_accepts_multiple_intents_from_single_decision_step() -> None:
+    class _DualQuoteAgent(ScriptedAgent):
+        def __init__(self) -> None:
+            super().__init__(agent_id="maker_01", agent_type="market_maker", max_resting_orders=3)
+
+        def decide(self, observation: MarketObservation, rng) -> tuple[OrderIntent, ...]:  # noqa: ARG002
+            return (
+                OrderIntent(
+                    side=Side.BUY,
+                    order_type=OrderType.LIMIT,
+                    quantity=1,
+                    limit_price=99.95,
+                    annotation="test_bid",
+                ),
+                OrderIntent(
+                    side=Side.SELL,
+                    order_type=OrderType.LIMIT,
+                    quantity=1,
+                    limit_price=100.05,
+                    annotation="test_ask",
+                ),
+            )
+
+    sim = SyntheticMarketSimulator(default_simulation_config(), horizon=3)
+    sim.reset(seed=7, horizon=3)
+    sim.agents["maker_01"] = _DualQuoteAgent()
+    sim.open_orders["maker_01"].clear()
+
+    sim.step()
+
+    order_events = [
+        event
+        for event in sim.event_log.events
+        if event.timestamp == 1.0 and event.event_type in {EventType.LIMIT_ORDER, EventType.MARKET_ORDER}
+    ]
+    annotations = [event.payload.get("annotation") for event in order_events]
+
+    assert annotations.count("test_bid") == 1
+    assert annotations.count("test_ask") == 1

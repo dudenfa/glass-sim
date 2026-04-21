@@ -35,6 +35,14 @@ def test_simulator_applies_scripted_agent_behavior_overrides() -> None:
                         inventory_anchor=12.0,
                         quote_size=7,
                         quote_padding_ticks=4,
+                        inventory_tolerance=2.5,
+                        min_quote_size=2,
+                        max_quote_size=9,
+                        bid_padding_ticks=5,
+                        ask_padding_ticks=3,
+                        inventory_skew_strength=1.25,
+                        inventory_size_decay=0.65,
+                        empty_side_padding_ticks=1,
                     ),
                 ),
             ),
@@ -93,6 +101,14 @@ def test_simulator_applies_scripted_agent_behavior_overrides() -> None:
     assert maker.inventory_anchor == 12.0
     assert maker.quote_size == 7
     assert maker.quote_padding_ticks == 4
+    assert maker.inventory_tolerance == 2.5
+    assert maker.min_quote_size == 2
+    assert maker.max_quote_size == 9
+    assert maker.bid_padding_ticks == 5
+    assert maker.ask_padding_ticks == 3
+    assert maker.inventory_skew_strength == 1.25
+    assert maker.inventory_size_decay == 0.65
+    assert maker.empty_side_padding_ticks == 1
 
     noise = simulator.agents["noise_01"]
     assert noise.aggressiveness == 0.95
@@ -131,6 +147,11 @@ def test_simulator_uses_legacy_defaults_without_behavior_overrides() -> None:
     assert maker.inventory_anchor == 40.0
     assert maker.quote_size == 3
     assert maker.quote_padding_ticks == 1
+    assert maker.min_quote_size == 1
+    assert maker.max_quote_size == 3
+    assert maker.bid_padding_ticks == 1
+    assert maker.ask_padding_ticks == 1
+    assert maker.empty_side_padding_ticks == 1
 
     noise = simulator.agents["retail_01"]
     assert noise.aggressiveness == 0.55
@@ -144,3 +165,37 @@ def test_simulator_uses_legacy_defaults_without_behavior_overrides() -> None:
     assert informed.signal_noise == 0.3
     assert informed.news_bias == 1.25
     assert informed.threshold_bps == 1.0
+
+
+def test_market_maker_side_specific_padding_overrides_symmetric_padding() -> None:
+    config = SimulationConfig(
+        simulation_id=SimulationId("sim_maker_padding_precedence"),
+        market=default_market_config(),
+        agents=(
+            AgentConfig(
+                agent_id=AgentId("maker_01"),
+                agent_type="market_maker",
+                starting_cash=10_000.0,
+                ruin_threshold=4_000.0,
+                max_resting_orders=3,
+                behavior=AgentBehaviorConfig(
+                    market_maker=MarketMakerBehaviorConfig(
+                        quote_padding_ticks=6,
+                        bid_padding_ticks=2,
+                        ask_padding_ticks=4,
+                    ),
+                ),
+            ),
+        ),
+        seed=11,
+        enable_news=False,
+        enable_private_signals=True,
+        public_tape_enabled=True,
+    )
+
+    simulator = SyntheticMarketSimulator(config, horizon=8)
+    maker = simulator.agents["maker_01"]
+
+    assert maker.quote_padding_ticks == 6
+    assert maker.bid_padding_ticks == 2
+    assert maker.ask_padding_ticks == 4
