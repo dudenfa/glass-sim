@@ -113,13 +113,40 @@ Current status:
 - one learning-controlled agent can already be inserted into the scripted market
 - the environment exposes a compact vector observation and a small discrete action set
 - PPO dependencies are installed with `requirements.txt` or `.[rl]`
-- the actual PPO training/evaluation scripts are the next implementation step
+- reward shaping supports both a linear absolute-inventory penalty and a separate quadratic inventory-risk penalty
+- train/eval entry points live in `scripts/train_rl_agent.py` and `scripts/eval_rl_agent.py`
 
 Quick smoke check:
 
 ```bash
 PYTHONPATH=src python3 -c "from marl_trading.rl import RLAction, RLActionType, SingleAgentMarketEnv; env = SingleAgentMarketEnv(); obs = env.reset(seed=7, horizon=32); print('obs_dim=', len(obs)); _, reward, done, info = env.step(RLAction(RLActionType.HOLD)); print('reward=', round(reward, 4), 'done=', done, 'step=', info['step_index'])"
 ```
+
+Example train command:
+
+```bash
+PYTHONPATH=src python3 scripts/train_rl_agent.py \
+  --preset baseline \
+  --learning-agent-id trend_01 \
+  --total-timesteps 50000 \
+  --inv-penalty 0.0 \
+  --inv-risk-penalty 0.0005 \
+  --checkpoint checkpoints/ppo_baseline_trend_01_zeroinv_risk5e-4_50k.zip
+```
+
+Example eval command:
+
+```bash
+PYTHONPATH=src python3 scripts/eval_rl_agent.py \
+  --checkpoint checkpoints/ppo_baseline_trend_01_zeroinv_risk5e-4_50k.zip \
+  --preset baseline \
+  --learning-agent-id trend_01 \
+  --inv-penalty 0.0 \
+  --inv-risk-penalty 0.0005 \
+  --output artifacts/rl_eval_baseline_trend_01_zeroinv_risk5e-4_50k.json
+```
+
+Both scripts preserve the existing long-form reward flags, accept the shorter aliases above, and record reward metadata including the base reward term, formula, and the two inventory-shaping coefficients.
 
 ## Project Layout
 
@@ -136,6 +163,8 @@ scripts/
   serve_market_view.py
   run_market_demo.py
   replay_market.py
+  train_rl_agent.py
+  eval_rl_agent.py
 ```
 
 ## Status

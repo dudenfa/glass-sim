@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from dataclasses import replace
@@ -15,12 +16,33 @@ if str(SRC_ROOT) not in sys.path:
 from marl_trading.configs import available_preset_names, build_preset_config, get_preset
 from marl_trading.core.config import SimulationConfig
 
+REWARD_BASE_TERM = "realized_pnl_delta"
+ALGORITHM_CHOICES = ("auto", "ppo", "maskable_ppo")
+REWARD_FORMULA = (
+    "realized_pnl_delta - inactivity_penalty(if no trade) - abs(inventory) * reward_inventory_penalty - "
+    "inventory^2 * reward_inventory_risk_penalty"
+)
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Evaluate a trained PPO agent in the scripted market and emit a comparison-ready report.",
+        description=(
+            "Evaluate a trained PPO agent in the scripted market and emit a comparison-ready report "
+            "with explicit reward-shaping metadata."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=(
+            "Per-step reward follows the environment base term with optional inventory shaping: "
+            f"{REWARD_FORMULA}."
+        ),
     )
     parser.add_argument("--checkpoint", type=Path, required=True, help="Path to a saved PPO checkpoint.")
+    parser.add_argument(
+        "--algorithm",
+        choices=ALGORITHM_CHOICES,
+        default="auto",
+        help="Algorithm backend used when loading the checkpoint. `auto` reads the checkpoint sidecar when available.",
+    )
     parser.add_argument(
         "--preset",
         choices=available_preset_names(),
@@ -40,26 +62,117 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=0.0,
         help="Starting inventory for the runtime-replaced RL slot only.",
     )
-    parser.add_argument("--reward-inventory-penalty", type=float, default=0.0, help="Optional absolute-inventory penalty coefficient.")
-    parser.add_argument("--max-quantity", type=int, default=3, help="Maximum discrete order quantity exposed to PPO.")
-    parser.add_argument("--max-price-offset-ticks", type=int, default=3, help="Maximum discrete price-offset ticks exposed to PPO.")
+    action_group = parser.add_argument_group(
+        "Phase A action space",
+        "Optional simplified action-space controls for evaluation parity with training.",
+    )
+    action_group.add_argument(
+        "--phase-a-action-space",
+        dest="phase_a_action_space",
+        action="store_true",
+        default=True,
+        help="Use the simplified discrete Phase A action space.",
+    )
+    action_group.add_argument(
+        "--full-action-space",
+        dest="phase_a_action_space",
+        action="store_false",
+        help="Use the full MultiDiscrete action space instead of the simplified Phase A action space.",
+    )
+    action_group.add_argument(
+        "--include-cancel-action",
+        action="store_true",
+        help="Include cancel_oldest in the simplified Phase A action set.",
+    )
+    action_group.add_argument(
+        "--fixed-order-quantity",
+        type=int,
+        default=1,
+        help="Fixed quantity used by the simplified Phase A action space.",
+    )
+    action_group.add_argument(
+        "--fixed-price-offset-ticks",
+        type=int,
+        default=1,
+        help="Fixed limit-price offset used by the simplified Phase A action space.",
+    )
+    reward_group = parser.add_argument_group(
+        "Reward shaping",
+        "Optional shaping terms applied on top of realized PnL delta.",
+    )
+    reward_group.add_argument(
+        "--reward-inactivity-penalty",
+        type=float,
+        default=0.0,
+        help="Flat penalty applied on RL steps where the learning agent records no trade.",
+    )
+    reward_group.add_argument(
+        "--reward-inventory-penalty",
+        "--inv-penalty",
+        dest="reward_inventory_penalty",
+        type=float,
+        default=0.0,
+        help="Linear abs(inventory) coefficient subtracted from the reward each RL step.",
+    )
+    reward_group.add_argument(
+        "--reward-inventory-risk-penalty",
+        "--inv-risk-penalty",
+        dest="reward_inventory_risk_penalty",
+        type=float,
+        default=0.0,
+        help="Quadratic inventory^2 risk coefficient subtracted from the reward each RL step.",
+    )
+    parser.add_argument("--max-quantity", type=int, default=3, help="Maximum discrete order quantity exposed in the full action space.")
+    parser.add_argument("--max-price-offset-ticks", type=int, default=3, help="Maximum discrete price-offset ticks exposed in the full action space.")
     parser.add_argument("--device", default="auto", help="Stable-Baselines device string.")
     parser.add_argument("--stochastic", action="store_true", help="Use stochastic policy actions during evaluation.")
     parser.add_argument("--output", type=Path, default=None, help="Optional output path for the evaluation report.")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of compact text.")
     parser.add_argument("--list-presets", action="store_true", help="List available presets and exit.")
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = build_parser()
     return parser.parse_args(argv)
 
 
-def import_ppo() -> Any:
+def import_ppo(algorithm: str) -> tuple[Any, Any | None]:
     try:
-        from stable_baselines3 import PPO
+        if algorithm == "maskable_ppo":
+            algo_module = importlib.import_module("sb3_contrib.ppo_mask")
+            utils_module = importlib.import_module("sb3_contrib.common.maskable.utils")
+            model_class = getattr(algo_module, "MaskablePPO")
+            get_action_masks = getattr(utils_module, "get_action_masks")
+            return model_class, get_action_masks
+        algo_module = importlib.import_module("stable_baselines3")
+        model_class = getattr(algo_module, "PPO")
+        return model_class, None
     except ImportError as exc:  # pragma: no cover - depends on optional install state
+        if algorithm == "maskable_ppo":
+            raise RuntimeError(
+                "MaskablePPO evaluation requires optional dependencies `stable-baselines3`, "
+                "`gymnasium`, and `sb3-contrib`. Install them before running scripts/eval_rl_agent.py."
+            ) from exc
         raise RuntimeError(
             "RL evaluation requires the optional dependency `stable-baselines3`. "
             "Install it before running scripts/eval_rl_agent.py."
         ) from exc
-    return PPO
+
+
+def resolve_algorithm(checkpoint_path: Path, requested_algorithm: str) -> str:
+    if requested_algorithm != "auto":
+        return requested_algorithm
+    metadata_path = checkpoint_path.with_suffix(".json")
+    if metadata_path.exists():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            algorithm = metadata.get("algorithm")
+            if algorithm in {"ppo", "maskable_ppo"}:
+                return str(algorithm)
+        except (OSError, ValueError, TypeError):
+            pass
+    return "ppo"
 
 
 def _normalize_checkpoint_load_path(checkpoint_path: Path) -> str:
@@ -90,12 +203,52 @@ def build_eval_config(
     return config, effective_horizon
 
 
+def build_reward_metadata(
+    *,
+    reward_inactivity_penalty: float,
+    reward_inventory_penalty: float,
+    reward_inventory_risk_penalty: float,
+) -> dict[str, Any]:
+    return {
+        "reward_signal": REWARD_BASE_TERM,
+        "reward_base_term": REWARD_BASE_TERM,
+        "reward_formula": REWARD_FORMULA,
+        "reward_summary": (
+            f"{REWARD_BASE_TERM} - {float(reward_inactivity_penalty):g} * inactivity(if no trade) - "
+            f"{float(reward_inventory_penalty):g} * abs(inventory) - "
+            f"{float(reward_inventory_risk_penalty):g} * inventory^2"
+        ),
+        "reward_shaping": {
+            "inactivity_penalty": {
+                "coefficient": float(reward_inactivity_penalty),
+                "target": "no_trade_step",
+            },
+            "linear_inventory_penalty": {
+                "coefficient": float(reward_inventory_penalty),
+                "target": "abs_inventory",
+            },
+            "quadratic_inventory_risk_penalty": {
+                "coefficient": float(reward_inventory_risk_penalty),
+                "target": "inventory_squared",
+            },
+        },
+    }
+
+
 def build_rl_evaluation_payload(
     *,
     checkpoint_path: Path,
+    algorithm: str,
     preset_name: str,
     learning_agent_id: str,
     learning_agent_starting_inventory: float,
+    phase_a_action_space: bool,
+    include_cancel_action: bool,
+    fixed_order_quantity: int,
+    fixed_price_offset_ticks: int,
+    reward_inactivity_penalty: float,
+    reward_inventory_penalty: float,
+    reward_inventory_risk_penalty: float,
     result: Any,
     config: SimulationConfig,
     horizon: int,
@@ -130,6 +283,26 @@ def build_rl_evaluation_payload(
         starting_midpoint=float(config.market.starting_mid_price),
         agent_metrics=agent_metrics,
     )
+    adjusted_rows = []
+    for row in portfolio_rows:
+        if row.agent_id != learning_agent_id:
+            adjusted_rows.append(row)
+            continue
+        adjusted_starting_inventory = float(learning_agent_starting_inventory)
+        adjusted_starting_equity = float(row.starting_cash + adjusted_starting_inventory * float(config.market.starting_mid_price))
+        adjusted_starting_free_equity = adjusted_starting_equity if row.starting_free_equity is not None else None
+        adjusted_rows.append(
+            replace(
+                row,
+                starting_inventory=adjusted_starting_inventory,
+                starting_equity=adjusted_starting_equity,
+                starting_free_equity=adjusted_starting_free_equity,
+                inventory_delta=float(row.ending_inventory - adjusted_starting_inventory),
+                equity_delta=float(row.ending_equity - adjusted_starting_equity),
+                total_pnl=float(row.ending_equity - adjusted_starting_equity),
+            )
+        )
+    portfolio_rows = adjusted_rows
     report = "\n\n".join(
         [
             format_market_health_summary(summary, preset_name=preset_name, seed=config.seed, horizon=horizon),
@@ -137,6 +310,11 @@ def build_rl_evaluation_payload(
         ]
     )
     serialized_rows = [row.to_dict() for row in portfolio_rows]
+    reward_metadata = build_reward_metadata(
+        reward_inactivity_penalty=reward_inactivity_penalty,
+        reward_inventory_penalty=reward_inventory_penalty,
+        reward_inventory_risk_penalty=reward_inventory_risk_penalty,
+    )
     return {
         "preset": get_preset(preset_name).name,
         "description": get_preset(preset_name).description,
@@ -150,10 +328,19 @@ def build_rl_evaluation_payload(
         "metadata": {
             "mode": "rl_evaluation",
             "checkpoint": str(checkpoint_path.resolve()),
+            "algorithm": str(algorithm),
             "learning_agent_id": str(learning_agent_id),
             "learning_agent_starting_inventory": float(learning_agent_starting_inventory),
+            "phase_a_action_space": bool(phase_a_action_space),
+            "include_cancel_action": bool(include_cancel_action),
+            "fixed_order_quantity": int(fixed_order_quantity),
+            "fixed_price_offset_ticks": int(fixed_price_offset_ticks),
+            "reward_inactivity_penalty": float(reward_inactivity_penalty),
+            "reward_inventory_penalty": float(reward_inventory_penalty),
+            "reward_inventory_risk_penalty": float(reward_inventory_risk_penalty),
             "deterministic": bool(deterministic),
             "runtime_slot_replacement": True,
+            **reward_metadata,
         },
     }
 
@@ -183,18 +370,28 @@ def _serialize_report(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
-    PPO = import_ppo()
+    checkpoint = Path(args.checkpoint).resolve()
+    algorithm = resolve_algorithm(checkpoint, str(args.algorithm))
+    PPO, get_action_masks = import_ppo(algorithm)
     from marl_trading.rl import GymSingleAgentMarketEnv, SingleAgentEnvConfig, SingleAgentMarketEnv
 
-    checkpoint = Path(args.checkpoint).resolve()
     if not checkpoint.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
+    if algorithm == "maskable_ppo" and not bool(args.phase_a_action_space):
+        raise ValueError("MaskablePPO evaluation is currently supported only with the simplified Phase A action space.")
 
     config, effective_horizon = build_eval_config(args.preset, seed=args.seed, horizon=args.horizon)
     env_config = SingleAgentEnvConfig(
         learning_agent_id=str(args.learning_agent_id),
         learning_agent_starting_inventory=float(args.learning_agent_starting_inventory),
+        phase_a_action_space=bool(args.phase_a_action_space),
+        include_cancel_action=bool(args.include_cancel_action),
+        fixed_order_quantity=int(args.fixed_order_quantity),
+        fixed_price_offset_ticks=int(args.fixed_price_offset_ticks),
+        reward_realized_pnl_delta_coefficient=1.0,
         reward_inventory_penalty=float(args.reward_inventory_penalty),
+        reward_inventory_risk_penalty=float(args.reward_inventory_risk_penalty),
+        reward_inactivity_penalty=float(args.reward_inactivity_penalty),
         auto_increment_seed_on_reset=False,
     )
     core_env = SingleAgentMarketEnv(config=config, env_config=env_config, horizon=effective_horizon)
@@ -209,7 +406,10 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     terminated = False
     truncated = False
     while not (terminated or truncated):
-        action, _state = model.predict(observation, deterministic=not bool(args.stochastic))
+        predict_kwargs: dict[str, Any] = {"deterministic": not bool(args.stochastic)}
+        if get_action_masks is not None:
+            predict_kwargs["action_masks"] = get_action_masks(gym_env)
+        action, _state = model.predict(observation, **predict_kwargs)
         observation, _reward, terminated, truncated, _info = gym_env.step(action)
 
     result = gym_env.build_run_result()
@@ -219,9 +419,17 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     }
     return build_rl_evaluation_payload(
         checkpoint_path=checkpoint,
+        algorithm=algorithm,
         preset_name=str(args.preset),
         learning_agent_id=str(args.learning_agent_id),
         learning_agent_starting_inventory=float(args.learning_agent_starting_inventory),
+        phase_a_action_space=bool(args.phase_a_action_space),
+        include_cancel_action=bool(args.include_cancel_action),
+        fixed_order_quantity=int(args.fixed_order_quantity),
+        fixed_price_offset_ticks=int(args.fixed_price_offset_ticks),
+        reward_inactivity_penalty=float(args.reward_inactivity_penalty),
+        reward_inventory_penalty=float(args.reward_inventory_penalty),
+        reward_inventory_risk_penalty=float(args.reward_inventory_risk_penalty),
         result=result,
         config=config,
         horizon=effective_horizon,

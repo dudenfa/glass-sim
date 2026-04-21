@@ -5,6 +5,7 @@ from .boundary import (
     action_to_order_intent,
     compute_reward,
     feature_vector,
+    mask_invalid_action,
     observation_to_feature_dict,
 )
 from .env import GymSingleAgentMarketEnv, SingleAgentEnvConfig, SingleAgentMarketEnv
@@ -25,6 +26,7 @@ __all__ = [
     "action_to_order_intent",
     "compute_reward",
     "feature_vector",
+    "mask_invalid_action",
     "observation_to_feature_dict",
     "GymSingleAgentMarketEnv",
     "SingleAgentEnvConfig",

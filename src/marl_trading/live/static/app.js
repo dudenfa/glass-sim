@@ -12,6 +12,7 @@ const CONFIG = {
   seed: Number.parseInt(QUERY.get("seed") || "17", 10),
   pollMs: Math.max(250, Number.parseInt(QUERY.get("poll") || "1000", 10)),
   defaultSpeed: Number.parseFloat(QUERY.get("speed") || "1") || 1,
+  defaultChartTimeframe: Math.max(1, Number.parseInt(QUERY.get("timeframe") || "5", 10)),
 };
 
 const CHART_WINDOW_SIZE = 120;
@@ -37,6 +38,7 @@ const els = {
   priceChart: document.getElementById("priceChart"),
   chartModeCandles: document.getElementById("chartModeCandles"),
   chartModeLine: document.getElementById("chartModeLine"),
+  chartTimeframe: document.getElementById("chartTimeframe"),
   orderBookTop: document.getElementById("orderBookTop"),
   orderBookFull: document.getElementById("orderBookFull"),
   tradesTape: document.getElementById("tradesTape"),
@@ -55,6 +57,7 @@ const state = {
   connected: false,
   autoplay: QUERY.get("autoplay") !== "0" && CONFIG.mode !== "paused",
   chartMode: "candles",
+  chartTimeframe: CONFIG.defaultChartTimeframe,
   backendStateUrl: null,
   backendControlUrl: null,
   timer: null,
@@ -216,6 +219,7 @@ function snapshotRenderKey(snapshot) {
     Number.isFinite(market.spread) ? market.spread.toFixed(4) : "na",
     activeAgents,
     state.chartMode,
+    state.chartTimeframe,
   ].join("|");
 }
 
@@ -465,18 +469,20 @@ function normalizeOrderBook(raw) {
 }
 
 function visibleSeriesForMode(snapshot) {
+  const bucketSize = Math.max(1, Number(state.chartTimeframe || 1));
+  const aggregated = aggregateChartBuckets(snapshot, bucketSize);
   if (state.chartMode === "candles") {
-    const candles = (snapshot.candles || []).slice(-CHART_WINDOW_SIZE);
+    const candles = aggregated.candles.slice(-CHART_WINDOW_SIZE);
     if (candles.length) {
       return {
         series: candles,
         fundamentals: candles.map((candle) => ({
-          step_index: candle.step_index,
+          step_index: candle.end_step ?? candle.step_index,
           value: Number.isFinite(candle.fundamental) ? candle.fundamental : candle.close,
         })),
       };
     }
-    const lineSeries = (snapshot.lineSeries || []).slice(-CHART_WINDOW_SIZE);
+    const lineSeries = aggregated.lineSeries.slice(-CHART_WINDOW_SIZE);
     return {
       series: lineSeries.map((point) => ({
         step_index: point.step_index,
@@ -493,19 +499,92 @@ function visibleSeriesForMode(snapshot) {
       })),
     };
   }
-  const lineSeries = (snapshot.lineSeries || []).slice(-CHART_WINDOW_SIZE);
+  const lineSeries = aggregated.lineSeries.slice(-CHART_WINDOW_SIZE);
   return {
-    series: lineSeries.length ? lineSeries : (snapshot.candles || []).slice(-CHART_WINDOW_SIZE).map((candle) => ({
-      step_index: candle.step_index,
+    series: lineSeries.length ? lineSeries : aggregated.candles.slice(-CHART_WINDOW_SIZE).map((candle) => ({
+      step_index: candle.end_step ?? candle.step_index,
       midpoint: candle.close,
       fundamental: candle.fundamental ?? snapshot.fundamental,
       volume: candle.volume,
     })),
-    fundamentals: (snapshot.fundamentalSeries || lineSeries.map((point) => ({
+    fundamentals: lineSeries.map((point) => ({
       step_index: point.step_index,
       value: point.fundamental ?? snapshot.fundamental,
-    }))).slice(-CHART_WINDOW_SIZE),
+    })).slice(-CHART_WINDOW_SIZE),
   };
+}
+
+function buildTradeVolumeByStep(snapshot) {
+  const volumeByStep = new Map();
+  const trades = toArray(snapshot?.trades || snapshot?.recent_trades || []);
+  trades.forEach((trade) => {
+    const step = Number(firstDefined(trade, ["time", "timestamp_ns", "timestamp"], NaN));
+    if (!Number.isFinite(step)) return;
+    const quantity = Number(firstDefined(trade, ["quantity", "qty", "size"], 1));
+    volumeByStep.set(step, (volumeByStep.get(step) || 0) + (Number.isFinite(quantity) ? quantity : 1));
+  });
+  return volumeByStep;
+}
+
+function aggregateChartBuckets(snapshot, bucketSize) {
+  const safeBucketSize = Math.max(1, Number(bucketSize || 1));
+  const rawLineSeries = (snapshot.lineSeries || [])
+    .map((point, index) => ({
+      step_index: Number(firstDefined(point, ["step_index"], index)),
+      midpoint: Number(firstDefined(point, ["midpoint"], NaN)),
+      fundamental: Number(firstDefined(point, ["fundamental"], NaN)),
+      volume: Number(firstDefined(point, ["volume"], NaN)),
+    }))
+    .filter((point) => Number.isFinite(point.midpoint));
+
+  if (!rawLineSeries.length) {
+    return { candles: [], lineSeries: [] };
+  }
+
+  const volumeByStep = buildTradeVolumeByStep(snapshot);
+  const buckets = new Map();
+  rawLineSeries.forEach((point) => {
+    const bucketIndex = Math.floor(point.step_index / safeBucketSize);
+    if (!buckets.has(bucketIndex)) {
+      buckets.set(bucketIndex, []);
+    }
+    buckets.get(bucketIndex).push(point);
+  });
+
+  const candles = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0]).map(([bucketIndex, chunk]) => {
+    const prices = chunk.map((point) => point.midpoint).filter(Number.isFinite);
+    const fundamentals = chunk.map((point) => point.fundamental).filter(Number.isFinite);
+    const startStep = chunk[0].step_index;
+    const endStep = chunk[chunk.length - 1].step_index;
+    const directVolume = chunk
+      .map((point) => point.volume)
+      .filter(Number.isFinite)
+      .reduce((sum, value) => sum + value, 0);
+    let tradeVolume = 0;
+    for (let step = startStep; step <= endStep; step += 1) {
+      tradeVolume += Number(volumeByStep.get(step) || 0);
+    }
+    return {
+      bucket_index: bucketIndex,
+      start_step: startStep,
+      end_step: endStep,
+      open: prices[0],
+      high: Math.max(...prices),
+      low: Math.min(...prices),
+      close: prices[prices.length - 1],
+      volume: directVolume > 0 ? directVolume : tradeVolume,
+      fundamental: fundamentals.length ? fundamentals[fundamentals.length - 1] : snapshot.fundamental,
+    };
+  });
+
+  const lineSeries = candles.map((candle) => ({
+    step_index: candle.end_step,
+    midpoint: candle.close,
+    fundamental: candle.fundamental,
+    volume: candle.volume,
+  }));
+
+  return { candles, lineSeries };
 }
 
 function resolveSeriesIndex(series, targetStep) {
@@ -668,7 +747,8 @@ function normalizeBackendState(raw) {
       }
       return {
         step_index: Number(firstDefined(point, ["step_index", "step", "time", "timestamp"], index)),
-        midpoint: Number(firstDefined(point, ["midpoint", "value", "close", "price"], NaN)),
+        midpoint: Number(firstDefined(point, ["price", "last_price", "value", "close", "midpoint"], NaN)),
+        bookMidpoint: Number(firstDefined(point, ["midpoint", "book_midpoint", "bookMidpoint"], NaN)),
         fundamental: Number(firstDefined(point, ["fundamental"], NaN)),
         volume: Number(firstDefined(point, ["volume", "v", "trade_volume"], NaN)),
       };
@@ -692,8 +772,12 @@ function normalizeBackendState(raw) {
     agentId: String(firstDefined(item, ["agent_id", "agentId"], "—")),
     decisionCount: Number(firstDefined(item, ["decision_count", "decisionCount"], 0)),
     actionCounts: firstDefined(item, ["action_counts", "actionCounts"], {}) || {},
+    requestedActionCounts: firstDefined(item, ["requested_action_counts", "requestedActionCounts"], {}) || {},
     lastActionType: String(firstDefined(item, ["last_action_type", "lastActionType"], "")),
+    lastRequestedActionType: String(firstDefined(item, ["last_requested_action_type", "lastRequestedActionType"], "")),
     lastFailureReason: String(firstDefined(item, ["last_failure_reason", "lastFailureReason"], "")),
+    invalidActionCount: Number(firstDefined(item, ["invalid_action_count", "invalidActionCount"], 0)),
+    invalidActionReasons: firstDefined(item, ["invalid_action_reasons", "invalidActionReasons"], {}) || {},
     openOrders: Number(firstDefined(item, ["open_orders", "openOrders"], 0)),
     inventory: Number(firstDefined(item, ["inventory"], NaN)),
     cash: Number(firstDefined(item, ["cash"], NaN)),
@@ -707,7 +791,7 @@ function normalizeBackendState(raw) {
   const eventCount = Number(firstDefined(summary, ["event_count", "eventCount", "total_events"], trades.length + actions.length));
 
   const latestCandle = candles.at(-1) || null;
-  const midpoint = Number(firstDefined(market, ["midpoint", "price", "last_price"], latestCandle?.close ?? lineSeries.at(-1)?.midpoint ?? NaN));
+  const midpoint = Number(firstDefined(market, ["last_price", "price", "midpoint"], latestCandle?.close ?? lineSeries.at(-1)?.midpoint ?? NaN));
   const spread = Number(firstDefined(market, ["spread"], Number.isFinite(orderBook.bids[0]?.price) && Number.isFinite(orderBook.asks[0]?.price)
     ? orderBook.asks[0].price - orderBook.bids[0].price
     : NaN));
@@ -1054,6 +1138,9 @@ function setModeStatus(text) {
 function updateModeButtons() {
   els.chartModeCandles.classList.toggle("chip-active", state.chartMode === "candles");
   els.chartModeLine.classList.toggle("chip-active", state.chartMode === "line");
+  if (els.chartTimeframe) {
+    els.chartTimeframe.value = String(state.chartTimeframe);
+  }
 }
 
 function resizeCanvas() {
@@ -1341,11 +1428,14 @@ function renderRlDiagnostics(snapshot) {
 
   const content = diagnostics.map((entry) => {
     const actionCounts = entry.actionCounts || {};
+    const requestedActionCounts = entry.requestedActionCounts || {};
     const total = Math.max(1, Number(entry.decisionCount || 0));
     const holdCount = Number(actionCounts.hold || 0);
     const marketCount = Number(actionCounts.market_buy || 0) + Number(actionCounts.market_sell || 0);
     const limitCount = Number(actionCounts.limit_buy || 0) + Number(actionCounts.limit_sell || 0);
     const cancelCount = Number(actionCounts.cancel_oldest || 0);
+    const requestedLimitCount = Number(requestedActionCounts.limit_buy || 0) + Number(requestedActionCounts.limit_sell || 0);
+    const invalidActionCount = Number(entry.invalidActionCount || 0);
     const rows = entry.recentOrderEvents?.length
       ? entry.recentOrderEvents.slice(-8).slice().reverse().map((action) => `
           <article class="rl-action-row">
@@ -1382,6 +1472,10 @@ function renderRlDiagnostics(snapshot) {
             <strong>${escapeHtml(String(limitCount))}</strong>
           </div>
           <div class="summary-card">
+            <span>Masked</span>
+            <strong>${escapeHtml(String(invalidActionCount))}</strong>
+          </div>
+          <div class="summary-card">
             <span>Cancel</span>
             <strong>${escapeHtml(String(cancelCount))}</strong>
           </div>
@@ -1394,6 +1488,7 @@ function renderRlDiagnostics(snapshot) {
             <strong>${escapeHtml(String(entry.openOrders))}</strong>
           </div>
         </div>
+        ${invalidActionCount > 0 ? `<div class="portfolio-note">masked ${escapeHtml(String(invalidActionCount))} invalid decisions; requested limit actions ${escapeHtml(String(requestedLimitCount))}; last requested ${escapeHtml(entry.lastRequestedActionType || "none")}</div>` : ""}
         ${entry.lastFailureReason ? `<div class="portfolio-note">policy note: ${escapeHtml(entry.lastFailureReason)}</div>` : ""}
         <div class="rl-diagnostic-list">
           <div class="latest-orders-columns rl-action-columns" aria-hidden="true">
@@ -2071,6 +2166,14 @@ function bindEvents() {
   bindTradeContextTooltipEvents();
   els.chartModeCandles.addEventListener("click", () => setChartMode("candles"));
   els.chartModeLine.addEventListener("click", () => setChartMode("line"));
+  els.chartTimeframe.addEventListener("change", () => {
+    const next = Math.max(1, Number.parseInt(els.chartTimeframe.value || "5", 10));
+    state.chartTimeframe = next;
+    if (state.snapshot) {
+      renderChartPrice(state.snapshot);
+      drawChart(state.snapshot);
+    }
+  });
   els.priceChart.addEventListener("pointermove", (event) => {
     if (!state.snapshot) return;
     const rect = els.priceChart.getBoundingClientRect();

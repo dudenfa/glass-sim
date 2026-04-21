@@ -131,7 +131,9 @@ class SyntheticMarketSimulator:
         self.recent_news = (None, None)
         self.step_records = []
         self.price_history: list[float] = []
+        self.midpoint_history: list[float | None] = []
         self.fundamental_history: list[float] = []
+        self.last_trade_price: float = float(self.start_midpoint)
         self.fundamental = FundamentalProcess(
             current_value=self.start_midpoint,
             news_sensitivity=float(self.market_config.fundamental_news_sensitivity),
@@ -409,8 +411,10 @@ class SyntheticMarketSimulator:
                 )
                 snapshot = self._current_book_snapshot(timestamp_ns)
         bootstrap_midpoint = snapshot.midpoint() or self.fundamental.current_value
+        self.last_trade_price = float(bootstrap_midpoint)
         self.recent_midpoints.append(bootstrap_midpoint)
-        self.price_history.append(float(bootstrap_midpoint))
+        self.price_history.append(float(self.last_trade_price))
+        self.midpoint_history.append(snapshot.midpoint())
         self.fundamental_history.append(float(self.fundamental.current_value))
         self._log_event(
             event_type=EventType.SNAPSHOT,
@@ -497,6 +501,7 @@ class SyntheticMarketSimulator:
         trades = self.exchange.submit_order(exchange_order)
         for trade in trades:
             execution_price = _ticks_to_price(trade.price, self.tick_size)
+            self.last_trade_price = float(execution_price)
             self.portfolios.apply_trade(trade, execution_price=execution_price)
             trade_snapshot = self._current_book_snapshot(timestamp_ns)
             taker_agent_id = trade.buy_agent_id if trade.aggressor_side is ExchangeSide.BUY else trade.sell_agent_id
@@ -664,7 +669,8 @@ class SyntheticMarketSimulator:
             )
             midpoint = snapshot.midpoint() or self.fundamental.current_value
             self.recent_midpoints.append(midpoint)
-            self.price_history.append(float(midpoint))
+            self.price_history.append(float(self.last_trade_price))
+            self.midpoint_history.append(snapshot.midpoint())
             self.fundamental_history.append(float(self.fundamental.current_value))
             record = MarketStepRecord(
                 step_index=step_index,
@@ -710,7 +716,8 @@ class SyntheticMarketSimulator:
         snapshot = self._current_book_snapshot(timestamp_ns)
         midpoint = snapshot.midpoint() or self.fundamental.current_value
         self.recent_midpoints.append(midpoint)
-        self.price_history.append(float(midpoint))
+        self.price_history.append(float(self.last_trade_price))
+        self.midpoint_history.append(snapshot.midpoint())
         self.fundamental_history.append(float(self.fundamental.current_value))
         total_equity = sum(portfolio.equity(midpoint) for portfolio in self.portfolios.portfolios.values())
         self._log_event(
@@ -883,6 +890,7 @@ class SyntheticMarketSimulator:
             },
             "market": {
                 "timestamp_ns": int(self._current_step_index),
+                "last_price": float(self.last_trade_price),
                 "midpoint": top_snapshot.midpoint(),
                 "fundamental": self.fundamental.current_value,
                 "spread": top_snapshot.spread(),
@@ -891,10 +899,11 @@ class SyntheticMarketSimulator:
                 "line": [
                     {
                         "step_index": index,
-                        "midpoint": float(midpoint),
+                        "price": float(self.price_history[index]),
+                        "midpoint": self.midpoint_history[index] if index < len(self.midpoint_history) else None,
                         "fundamental": float(self.fundamental_history[index]) if index < len(self.fundamental_history) else float(self.fundamental.current_value),
                     }
-                    for index, midpoint in enumerate(self.price_history)
+                    for index in range(len(self.price_history))
                 ],
                 "candles": self._candle_series(candle_window),
                 "order_book": self._book_snapshot_dict(top_snapshot),

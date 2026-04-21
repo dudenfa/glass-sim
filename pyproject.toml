@@ -20,6 +20,7 @@ dev = ["pytest>=8.0"]
 rl = [
     "gymnasium>=0.29,<1.0",
     "stable-baselines3>=2.3,<3.0",
+    "sb3-contrib>=2.3,<3.0",
 ]
 
 [tool.setuptools]

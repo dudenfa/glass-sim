@@ -2,18 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections import defaultdict
-from enum import Enum
 from pathlib import Path
 import threading
 import time
 from typing import Any
 
-from marl_trading.agents.base import MarketObservation, OrderIntent, ScriptedAgent, _clamp_price, _midpoint_or_fallback
+from marl_trading.agents.base import ScriptedAgent
 from marl_trading.analysis import EventType, MarketEvent, OrderBookSnapshot
 from marl_trading.configs.defaults import default_simulation_config
 from marl_trading.core.config import SimulationConfig
-from marl_trading.exchange.models import OrderType, Side
 from marl_trading.market.simulator import SyntheticMarketSimulator, _analysis_snapshot_from_exchange_snapshot
+from marl_trading.rl.live import PPOPolicyAdapter, RuntimePolicyControlledAgent
 
 
 @dataclass
@@ -26,111 +25,11 @@ class _PnLTracker:
     realized_pnl: float = 0.0
 
 
-class _RLActionType(str, Enum):
-    HOLD = "hold"
-    MARKET_BUY = "market_buy"
-    MARKET_SELL = "market_sell"
-    LIMIT_BUY = "limit_buy"
-    LIMIT_SELL = "limit_sell"
-    CANCEL_OLDEST = "cancel_oldest"
-
-
-@dataclass(frozen=True)
-class _RLAction:
-    action_type: _RLActionType
-    quantity: int = 1
-    price_offset_ticks: int = 1
-
-
-def _feature_vector(observation: MarketObservation) -> tuple[float, ...]:
-    midpoint = observation.midpoint if observation.midpoint is not None else observation.latent_fundamental
-    best_bid = observation.best_bid if observation.best_bid is not None else midpoint
-    best_ask = observation.best_ask if observation.best_ask is not None else midpoint
-    spread = observation.spread if observation.spread is not None else max(best_ask - best_bid, 0.0)
-    recent_returns = list(observation.recent_returns_bps[-3:])
-    while len(recent_returns) < 3:
-        recent_returns.insert(0, 0.0)
-    return (
-        float(best_bid),
-        float(best_ask),
-        float(midpoint),
-        float(spread),
-        float(observation.latent_fundamental),
-        float(observation.latent_fundamental - midpoint),
-        float(recent_returns[-1]),
-        float(recent_returns[-2]),
-        float(recent_returns[-3]),
-        float(observation.news_severity or 0.0),
-        float(observation.agent_cash),
-        float(observation.agent_inventory),
-        float(observation.agent_equity),
-        float(observation.open_orders),
-        float(observation.active_agents),
-        1.0 if observation.portfolio_active else 0.0,
-    )
-
-
-def _action_to_order_intent(action: _RLAction, observation: MarketObservation) -> OrderIntent | None:
-    quantity = max(int(action.quantity), 1)
-    offset_ticks = max(int(action.price_offset_ticks), 1)
-    tick = float(observation.tick_size)
-    midpoint = _midpoint_or_fallback(observation)
-
-    if action.action_type is _RLActionType.HOLD:
-        return None
-    if action.action_type is _RLActionType.CANCEL_OLDEST:
-        return None
-    if action.action_type is _RLActionType.MARKET_BUY:
-        return OrderIntent(side=Side.BUY, order_type=OrderType.MARKET, quantity=quantity, annotation="rl_market_buy")
-    if action.action_type is _RLActionType.MARKET_SELL:
-        return OrderIntent(side=Side.SELL, order_type=OrderType.MARKET, quantity=quantity, annotation="rl_market_sell")
-    if action.action_type is _RLActionType.LIMIT_BUY:
-        anchor = observation.best_bid if observation.best_bid is not None else midpoint
-        price = _clamp_price(anchor - offset_ticks * tick, tick)
-        return OrderIntent(side=Side.BUY, order_type=OrderType.LIMIT, quantity=quantity, limit_price=price, annotation="rl_limit_buy")
-    if action.action_type is _RLActionType.LIMIT_SELL:
-        anchor = observation.best_ask if observation.best_ask is not None else midpoint
-        price = _clamp_price(anchor + offset_ticks * tick, tick)
-        return OrderIntent(side=Side.SELL, order_type=OrderType.LIMIT, quantity=quantity, limit_price=price, annotation="rl_limit_sell")
-    raise ValueError(f"Unsupported RL action type: {action.action_type}")
-
-
 @dataclass(frozen=True)
 class _RuntimeRLConfig:
     checkpoint_path: Path
     learning_agent_id: str
     learning_agent_starting_inventory: float
-
-
-class _LivePPOAgentProxy(ScriptedAgent):
-    def __init__(self, agent_id: str, model: Any, max_resting_orders: int = 1) -> None:
-        super().__init__(agent_id=agent_id, agent_type="rl_agent", max_resting_orders=max_resting_orders)
-        self._model = model
-
-    def _coerce_action(self, raw_action: Any) -> _RLAction:
-        try:
-            values = list(raw_action)
-        except TypeError:
-            values = [int(raw_action)]
-        if len(values) == 0:
-            return _RLAction(_RLActionType.HOLD)
-        if len(values) != 3:
-            raise ValueError("PPO live-view action must contain exactly 3 integers.")
-        action_types = tuple(_RLActionType)
-        action_index = int(values[0])
-        if action_index < 0 or action_index >= len(action_types):
-            raise ValueError(f"Unsupported PPO action index: {action_index}")
-        return _RLAction(
-            action_type=action_types[action_index],
-            quantity=int(values[1]) + 1,
-            price_offset_ticks=int(values[2]) + 1,
-        )
-
-    def decide(self, observation: MarketObservation, rng) -> OrderIntent | None:  # noqa: ARG002
-        features = _feature_vector(observation)
-        action, _state = self._model.predict(features, deterministic=True)
-        decoded_action = self._coerce_action(action)
-        return _action_to_order_intent(decoded_action, observation)
 
 
 class LiveMarketSession:
@@ -158,7 +57,7 @@ class LiveMarketSession:
             learning_agent_id=learning_agent_id,
             learning_agent_starting_inventory=learning_agent_starting_inventory,
         )
-        self._ppo_model = None if self._runtime_rl is None else self._load_ppo_model(self._runtime_rl.checkpoint_path)
+        self._ppo_model = None if self._runtime_rl is None else self._load_ppo_policy(self._runtime_rl.checkpoint_path)
 
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -221,17 +120,17 @@ class LiveMarketSession:
             learning_agent_starting_inventory=float(learning_agent_starting_inventory),
         )
 
-    def _load_ppo_model(self, checkpoint_path: Path) -> Any:
-        try:
-            from stable_baselines3 import PPO
-        except ImportError as exc:  # pragma: no cover - depends on optional install state
+    def _load_ppo_policy(self, checkpoint_path: Path):
+        adapter, status = PPOPolicyAdapter.try_load(
+            checkpoint_path,
+            device="cpu",
+            deterministic=True,
+        )
+        if adapter is None:
             raise RuntimeError(
-                "Live PPO playback requires the optional dependency `stable-baselines3`."
-            ) from exc
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(f"PPO checkpoint not found: {checkpoint_path}")
-        load_path = checkpoint_path.with_suffix("") if checkpoint_path.suffix == ".zip" else checkpoint_path
-        return PPO.load(str(load_path), device="cpu")
+                status.reason or f"Unable to load PPO checkpoint: {status.checkpoint_path}"
+            )
+        return adapter
 
     def _attach_runtime_rl_agent(self, simulator: SyntheticMarketSimulator) -> None:
         if self._runtime_rl is None:
@@ -240,10 +139,13 @@ class LiveMarketSession:
         if agent_id not in simulator.agents:
             raise KeyError(f"Unknown runtime learning agent id: {agent_id}")
         original = simulator.agents[agent_id]
-        simulator.agents[agent_id] = _LivePPOAgentProxy(
+        simulator.agents[agent_id] = RuntimePolicyControlledAgent(
             agent_id=agent_id,
-            model=self._ppo_model,
+            policy=self._ppo_model,
+            fallback_agent=original if isinstance(original, ScriptedAgent) else None,
+            agent_type="rl_agent",
             max_resting_orders=getattr(original, "max_resting_orders", 1),
+            delegate_bootstrap=False,
         )
         portfolio = simulator.portfolios.get(agent_id)
         overridden_inventory = float(self._runtime_rl.learning_agent_starting_inventory)
@@ -374,13 +276,15 @@ class LiveMarketSession:
         else:
             start_index = max(0, int(start_index))
         fundamental_history = self.simulator.fundamental_history
+        midpoint_history = self.simulator.midpoint_history
         fallback_fundamental = float(self.simulator.fundamental.current_value)
 
         return [
             {
                 "step_index": index,
                 "timestamp_ns": index,
-                "midpoint": float(price_history[index]),
+                "price": float(price_history[index]),
+                "midpoint": midpoint_history[index] if index < len(midpoint_history) else None,
                 "fundamental": float(fundamental_history[index]) if index < len(fundamental_history) else fallback_fundamental,
             }
             for index in range(start_index, len(price_history))
@@ -408,8 +312,12 @@ class LiveMarketSession:
 
         for bucket_index in sorted(buckets):
             chunk = buckets[bucket_index]
-            midpoint_values = [float(point["midpoint"]) for point in chunk if point.get("midpoint") is not None]
-            if not midpoint_values:
+            price_values = [
+                float(point["price"])
+                for point in chunk
+                if point.get("price") is not None
+            ]
+            if not price_values:
                 continue
             fundamental_values = [float(point["fundamental"]) for point in chunk if point.get("fundamental") is not None]
             start_step = int(chunk[0]["step_index"])
@@ -419,10 +327,10 @@ class LiveMarketSession:
                     "bucket_index": bucket_index,
                     "start_step": start_step,
                     "end_step": end_step,
-                    "open": midpoint_values[0],
-                    "high": max(midpoint_values),
-                    "low": min(midpoint_values),
-                    "close": midpoint_values[-1],
+                    "open": price_values[0],
+                    "high": max(price_values),
+                    "low": min(price_values),
+                    "close": price_values[-1],
                     "fundamental_open": fundamental_values[0] if fundamental_values else None,
                     "fundamental_close": fundamental_values[-1] if fundamental_values else None,
                     "trade_count": int(sum(1 for trade in recent_trades if start_step <= int(trade["timestamp_ns"]) <= end_step)),
@@ -609,6 +517,7 @@ class LiveMarketSession:
             "symbol": self.simulator.market_config.symbol.value,
             "step_index": current_step,
             "timestamp_ns": current_step,
+            "last_price": float(self.simulator.last_trade_price),
             "midpoint": top_snapshot.midpoint(),
             "fundamental": float(self.simulator.fundamental.current_value),
             "spread": top_snapshot.spread(),

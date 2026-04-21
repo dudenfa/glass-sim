@@ -340,6 +340,17 @@ button {
   padding-top: 2px;
 }
 
+.timeframe-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.timeframe-select {
+  min-width: 76px;
+}
+
 .chart-mode-toggle {
   min-width: 40px;
   padding: 0 10px;

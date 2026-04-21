@@ -19,9 +19,18 @@ from marl_trading.core.config import SimulationConfig
 from marl_trading.market.processes import NewsEvent
 from marl_trading.market.simulator import MarketRunResult, SyntheticMarketSimulator
 
-from .boundary import RLAction, RLActionType, action_to_order_intent, compute_reward, feature_vector
+from .boundary import (
+    PHASE_A_ACTION_TYPE_ORDER,
+    RLAction,
+    RLActionType,
+    action_to_order_intent,
+    build_action_mask,
+    compute_reward,
+    feature_vector,
+    mask_invalid_action,
+)
 
-_FEATURE_DIMENSION = 16
+_FEATURE_DIMENSION = 18
 _ACTION_TYPE_ORDER = tuple(RLActionType)
 
 
@@ -52,19 +61,41 @@ class _FallbackMultiDiscrete:
         self.shape = tuple(self.nvec.shape)
 
 
+class _FallbackDiscrete:
+    def __init__(self, n: int) -> None:
+        self.n = int(n)
+        self.shape = ()
+
+
 _GymEnvBase = gym.Env if gym is not None else _FallbackEnvBase
 _BoxSpace = spaces.Box if spaces is not None else _FallbackBox
 _MultiDiscreteSpace = spaces.MultiDiscrete if spaces is not None else _FallbackMultiDiscrete
+_DiscreteSpace = spaces.Discrete if spaces is not None else _FallbackDiscrete
 
 
 @dataclass(frozen=True)
 class SingleAgentEnvConfig:
     learning_agent_id: str
     learning_agent_starting_inventory: float = 0.0
+    phase_a_action_space: bool = True
+    include_cancel_action: bool = False
+    fixed_order_quantity: int = 1
+    fixed_price_offset_ticks: int = 1
+    reward_realized_pnl_delta_coefficient: float = 0.0
     reward_inventory_penalty: float = 0.0
+    reward_inventory_risk_penalty: float = 0.0
+    reward_equity_delta_coefficient: float = 1.0
+    reward_inactivity_penalty: float = 0.0
     terminate_on_ruin: bool = True
     auto_increment_seed_on_reset: bool = False
     seed_stride: int = 1
+
+
+@dataclass
+class _PnlTracker:
+    inventory: float
+    cost_basis: float
+    realized_pnl: float = 0.0
 
 
 class _LearningAgentProxy(ScriptedAgent):
@@ -103,6 +134,8 @@ class SingleAgentMarketEnv:
         self._last_info: dict[str, Any] = {}
         self._reset_count = 0
         self._last_seed = int(self.config.seed)
+        self._processed_event_count = 0
+        self._pnl_trackers: dict[str, _PnlTracker] = {}
         self.reset()
 
     def _default_learning_agent_id(self) -> str:
@@ -132,6 +165,59 @@ class SingleAgentMarketEnv:
         portfolio.starting_inventory = overridden_inventory
         portfolio.inventory = overridden_inventory
         portfolio.reserved_inventory = 0.0
+
+    def _bootstrap_pnl_trackers(self) -> None:
+        if self.simulator is None:
+            return
+        self._processed_event_count = 0
+        self._pnl_trackers = {}
+        for agent_id, portfolio in self.simulator.portfolios.portfolios.items():
+            starting_inventory = float(portfolio.inventory)
+            self._pnl_trackers[agent_id] = _PnlTracker(
+                inventory=starting_inventory,
+                cost_basis=starting_inventory * float(self.simulator.start_midpoint),
+            )
+
+    def _ingest_new_trade_events(self) -> int:
+        if self.simulator is None:
+            return 0
+        events = self.simulator.event_log.events
+        if self._processed_event_count >= len(events):
+            return 0
+        learning_agent_trade_count = 0
+        for event in events[self._processed_event_count :]:
+            self._processed_event_count += 1
+            event_type = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+            if event_type != "trade":
+                continue
+            payload = dict(event.payload)
+            buy_agent_id = payload.get("buy_agent_id")
+            sell_agent_id = payload.get("sell_agent_id")
+            if buy_agent_id is None or sell_agent_id is None or event.price is None or event.quantity is None:
+                continue
+            price = float(event.price)
+            quantity = float(event.quantity)
+
+            buyer = self._pnl_trackers.setdefault(str(buy_agent_id), _PnlTracker(inventory=0.0, cost_basis=0.0))
+            seller = self._pnl_trackers.setdefault(str(sell_agent_id), _PnlTracker(inventory=0.0, cost_basis=0.0))
+            learning_agent_id = self.env_config.learning_agent_id
+            if str(buy_agent_id) == learning_agent_id or str(sell_agent_id) == learning_agent_id:
+                learning_agent_trade_count += 1
+
+            buyer.inventory += quantity
+            buyer.cost_basis += quantity * price
+
+            average_cost = seller.cost_basis / seller.inventory if seller.inventory > 1e-12 else price
+            seller.realized_pnl += quantity * (price - average_cost)
+            seller.cost_basis = max(seller.cost_basis - average_cost * quantity, 0.0)
+            seller.inventory = max(seller.inventory - quantity, 0.0)
+        return learning_agent_trade_count
+
+    def _current_realized_pnl(self) -> float:
+        tracker = self._pnl_trackers.get(self.env_config.learning_agent_id)
+        if tracker is None:
+            return 0.0
+        return float(tracker.realized_pnl)
 
     def _active_agent_ids(self) -> list[str]:
         if self.simulator is None:
@@ -204,6 +290,7 @@ class SingleAgentMarketEnv:
         self._last_reward = 0.0
         self._last_info = {}
         self._reset_count += 1
+        self._bootstrap_pnl_trackers()
         observation = self._advance_until_learning_turn()
         return feature_vector(observation)
 
@@ -235,16 +322,20 @@ class SingleAgentMarketEnv:
 
         previous_observation = self.get_observation()
         previous_equity = float(previous_observation.agent_equity)
+        previous_realized_pnl = self._current_realized_pnl()
+        effective_action, invalid_action_reason = mask_invalid_action(action, previous_observation)
+        intent_submitted = effective_action.action_type not in {RLActionType.HOLD, RLActionType.CANCEL_OLDEST}
 
         cancelled_order_id: str | None = None
-        if action.action_type is RLActionType.CANCEL_OLDEST:
+        if effective_action.action_type is RLActionType.CANCEL_OLDEST:
             open_orders = list(self.simulator.open_orders.get(self.env_config.learning_agent_id, []))
             if open_orders:
                 cancelled_order_id = str(open_orders[0])
                 self.simulator._cancel_oldest_order(self.env_config.learning_agent_id, self.simulator.current_step_index)  # noqa: SLF001
 
-        self._proxy.set_action(action)
+        self._proxy.set_action(effective_action)
         self.simulator.step()
+        learning_agent_trade_count = self._ingest_new_trade_events()
 
         if self._learning_agent_inactive():
             self._done = True
@@ -252,6 +343,7 @@ class SingleAgentMarketEnv:
         while not self._done and not self._is_learning_turn():
             self._proxy.set_action(RLAction(RLActionType.HOLD))
             self.simulator.step()
+            learning_agent_trade_count += self._ingest_new_trade_events()
             if self._learning_agent_inactive():
                 self._done = True
                 break
@@ -260,11 +352,19 @@ class SingleAgentMarketEnv:
                 break
 
         observation = self._build_observation()
+        current_realized_pnl = self._current_realized_pnl()
         reward_breakdown = compute_reward(
             previous_equity=previous_equity,
             current_equity=float(observation.agent_equity),
             current_inventory=float(observation.agent_inventory),
-            inventory_penalty_coefficient=float(self.env_config.reward_inventory_penalty),
+            previous_realized_pnl=previous_realized_pnl,
+            current_realized_pnl=current_realized_pnl,
+            realized_pnl_delta_coefficient=float(self.env_config.reward_realized_pnl_delta_coefficient),
+            equity_delta_coefficient=float(self.env_config.reward_equity_delta_coefficient),
+            inactivity_penalty_applied=learning_agent_trade_count == 0,
+            inactivity_penalty_coefficient=float(self.env_config.reward_inactivity_penalty),
+            absolute_inventory_penalty_coefficient=float(self.env_config.reward_inventory_penalty),
+            inventory_risk_penalty_coefficient=float(self.env_config.reward_inventory_risk_penalty),
         )
         done = bool(self._done or self.simulator.current_step_index >= self.horizon)
         if done:
@@ -274,10 +374,20 @@ class SingleAgentMarketEnv:
         info: dict[str, Any] = {
             "previous_equity": previous_equity,
             "current_equity": float(observation.agent_equity),
+            "previous_realized_pnl": previous_realized_pnl,
+            "current_realized_pnl": current_realized_pnl,
+            "realized_pnl_delta": reward_breakdown.realized_pnl_delta,
             "current_inventory": float(observation.agent_inventory),
             "reward_breakdown": reward_breakdown,
-            "applied_action": action.action_type.value,
+            "requested_action": action.action_type.value,
+            "applied_action": effective_action.action_type.value,
             "cancelled_order_id": cancelled_order_id,
+            "intent_submitted": bool(intent_submitted),
+            "invalid_action_reason": invalid_action_reason,
+            "action_masked": bool(invalid_action_reason is not None),
+            "learning_agent_trade_count": int(learning_agent_trade_count),
+            "learning_agent_had_trade": bool(learning_agent_trade_count > 0),
+            "inactivity_penalty_applied": bool(learning_agent_trade_count == 0),
             "step_index": int(self.simulator.current_step_index),
             "portfolio_active": bool(observation.portfolio_active),
             "done_reason": done_reason,
@@ -327,13 +437,21 @@ class GymSingleAgentMarketEnv(_GymEnvBase):
         self.core_env = core_env
         self.max_quantity = max(int(max_quantity), 1)
         self.max_price_offset_ticks = max(int(max_price_offset_ticks), 1)
-        self.action_space = _MultiDiscreteSpace(
-            [
-                len(_ACTION_TYPE_ORDER),
-                self.max_quantity,
-                self.max_price_offset_ticks,
-            ]
-        )
+        env_config = self.core_env.env_config
+        self.phase_a_action_space = bool(env_config.phase_a_action_space)
+        self.fixed_order_quantity = max(int(env_config.fixed_order_quantity), 1)
+        self.fixed_price_offset_ticks = max(int(env_config.fixed_price_offset_ticks), 1)
+        self.action_types = self._resolve_action_types(include_cancel=bool(env_config.include_cancel_action))
+        if self.phase_a_action_space:
+            self.action_space = _DiscreteSpace(len(self.action_types))
+        else:
+            self.action_space = _MultiDiscreteSpace(
+                [
+                    len(_ACTION_TYPE_ORDER),
+                    self.max_quantity,
+                    self.max_price_offset_ticks,
+                ]
+            )
         self.observation_space = _BoxSpace(
             low=-np.inf,
             high=np.inf,
@@ -341,9 +459,25 @@ class GymSingleAgentMarketEnv(_GymEnvBase):
             dtype=np.float32,
         )
 
+    def _resolve_action_types(self, *, include_cancel: bool) -> tuple[RLActionType, ...]:
+        if self.phase_a_action_space:
+            if include_cancel:
+                return PHASE_A_ACTION_TYPE_ORDER + (RLActionType.CANCEL_OLDEST,)
+            return PHASE_A_ACTION_TYPE_ORDER
+        return _ACTION_TYPE_ORDER
+
     def _coerce_action(self, action: RLAction | np.ndarray | list[int] | tuple[int, ...]) -> RLAction:
         if isinstance(action, RLAction):
             return action
+        if self.phase_a_action_space:
+            action_index = int(np.asarray(action, dtype=np.int64).reshape(-1)[0])
+            if action_index < 0 or action_index >= len(self.action_types):
+                raise ValueError(f"Unsupported action index: {action_index}")
+            return RLAction(
+                action_type=self.action_types[action_index],
+                quantity=self.fixed_order_quantity,
+                price_offset_ticks=self.fixed_price_offset_ticks,
+            )
         raw = np.asarray(action, dtype=np.int64).reshape(-1)
         if raw.size != 3:
             raise ValueError("Gym action must contain exactly 3 integers: type, quantity, price offset.")
@@ -358,6 +492,19 @@ class GymSingleAgentMarketEnv(_GymEnvBase):
             price_offset_ticks=price_offset_ticks,
         )
 
+    def action_masks(self) -> np.ndarray:
+        observation = self.core_env.get_observation()
+        if self.phase_a_action_space:
+            mask = build_action_mask(
+                observation,
+                action_types=self.action_types,
+                quantity=self.fixed_order_quantity,
+                price_offset_ticks=self.fixed_price_offset_ticks,
+            )
+        else:
+            mask = tuple(True for _ in range(len(_ACTION_TYPE_ORDER)))
+        return np.asarray(mask, dtype=bool)
+
     def reset(
         self,
         *,
@@ -366,7 +513,11 @@ class GymSingleAgentMarketEnv(_GymEnvBase):
     ) -> tuple[np.ndarray, dict[str, Any]]:
         horizon = None if not options else options.get("horizon")
         observation = self.core_env.reset(seed=seed, horizon=horizon)
-        return np.asarray(observation, dtype=np.float32), self.core_env.reset_info()
+        info = self.core_env.reset_info()
+        info["action_mask"] = self.action_masks().astype(bool).tolist()
+        info["action_types"] = [action_type.value for action_type in self.action_types]
+        info["phase_a_action_space"] = bool(self.phase_a_action_space)
+        return np.asarray(observation, dtype=np.float32), info
 
     def step(
         self,
@@ -378,6 +529,9 @@ class GymSingleAgentMarketEnv(_GymEnvBase):
         truncated = bool(done and info.get("done_reason") == "horizon")
         enriched_info = dict(info)
         enriched_info["rl_action"] = decoded_action.action_type.value
+        enriched_info["action_mask"] = self.action_masks().astype(bool).tolist()
+        enriched_info["action_types"] = [action_type.value for action_type in self.action_types]
+        enriched_info["phase_a_action_space"] = bool(self.phase_a_action_space)
         return np.asarray(observation, dtype=np.float32), float(reward), terminated, truncated, enriched_info
 
     def close(self) -> None:

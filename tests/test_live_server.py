@@ -11,6 +11,18 @@ from marl_trading.live.server import LiveServerConfig, parse_args, serve_market_
 from marl_trading.live.session import LiveMarketSession
 
 
+class _FakePolicyAdapter:
+    def action_for(self, observation):  # noqa: ARG002
+        from marl_trading.rl.live import RuntimePolicyDecision, decode_policy_action
+
+        raw_action = (0, 0, 0)
+        return RuntimePolicyDecision(
+            features=tuple(),
+            raw_action=raw_action,
+            rl_action=decode_policy_action(raw_action),
+        )
+
+
 def test_live_server_defaults_are_long_running() -> None:
     config = LiveServerConfig()
     assert config.horizon == 10_000
@@ -81,8 +93,8 @@ def test_live_server_endpoints() -> None:
 
 
 def test_live_server_passes_runtime_rl_config_into_session(monkeypatch) -> None:
-    fake_model = object()
-    monkeypatch.setattr(LiveMarketSession, "_load_ppo_model", lambda self, path: fake_model)
+    fake_policy = _FakePolicyAdapter()
+    monkeypatch.setattr(LiveMarketSession, "_load_ppo_policy", lambda self, path: fake_policy)
 
     try:
         server = serve_market_view(
@@ -102,5 +114,6 @@ def test_live_server_passes_runtime_rl_config_into_session(monkeypatch) -> None:
         state = server.session.state()
         trend_state = next(agent for agent in state["agents"] if agent["agent_id"] == "trend_01")
         assert trend_state["agent_type"] == "rl_agent"
+        assert trend_state["rl_diagnostics"] is not None
     finally:
         server.stop()

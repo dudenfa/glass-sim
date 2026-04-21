@@ -1,0 +1,44 @@
+{
+  "algorithm": "maskable_ppo",
+  "batch_size": 128,
+  "checkpoint": "/Users/dude/Desktop/uni/tirocinio/marl-trading/checkpoints/maskableppo_baseline_trend_01_liquidityaware_50k.zip",
+  "description": "Default balanced market with the current simulator settings.",
+  "device": "auto",
+  "fixed_order_quantity": 1,
+  "fixed_price_offset_ticks": 1,
+  "gamma": 0.99,
+  "horizon": 5000,
+  "include_cancel_action": false,
+  "learning_agent_id": "trend_01",
+  "learning_agent_starting_inventory": 0.0,
+  "learning_rate": 0.0003,
+  "max_price_offset_ticks": 3,
+  "max_quantity": 3,
+  "n_steps": 512,
+  "phase_a_action_space": true,
+  "preset": "baseline",
+  "reward_base_term": "realized_pnl_delta",
+  "reward_formula": "realized_pnl_delta - inactivity_penalty(if no trade) - abs(inventory) * reward_inventory_penalty - inventory^2 * reward_inventory_risk_penalty",
+  "reward_inactivity_penalty": 0.01,
+  "reward_inventory_penalty": 0.0,
+  "reward_inventory_risk_penalty": 0.0,
+  "reward_shaping": {
+    "inactivity_penalty": {
+      "coefficient": 0.01,
+      "target": "no_trade_step"
+    },
+    "linear_inventory_penalty": {
+      "coefficient": 0.0,
+      "target": "abs_inventory"
+    },
+    "quadratic_inventory_risk_penalty": {
+      "coefficient": 0.0,
+      "target": "inventory_squared"
+    }
+  },
+  "reward_signal": "realized_pnl_delta",
+  "reward_summary": "realized_pnl_delta - 0.01 * inactivity(if no trade) - 0 * abs(inventory) - 0 * inventory^2",
+  "runtime_slot_replacement": true,
+  "seed": 7,
+  "total_timesteps": 50000
+}

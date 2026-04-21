@@ -10,10 +10,69 @@ from scripts import train_rl_agent
 def test_parse_args_defaults_to_trend_slot() -> None:
     args = train_rl_agent.parse_args(["--total-timesteps", "128"])
 
+    assert args.algorithm == "ppo"
     assert args.preset == "baseline"
     assert args.learning_agent_id == "trend_01"
     assert args.learning_agent_starting_inventory == 0.0
+    assert args.phase_a_action_space is True
+    assert args.include_cancel_action is False
+    assert args.fixed_order_quantity == 1
+    assert args.fixed_price_offset_ticks == 1
+    assert args.reward_inactivity_penalty == 0.0
+    assert args.reward_inventory_penalty == 0.0
+    assert args.reward_inventory_risk_penalty == 0.0
     assert args.total_timesteps == 128
+
+
+def test_build_parser_help_describes_reward_shaping() -> None:
+    help_text = train_rl_agent.build_parser().format_help()
+
+    assert "Reward shaping" in help_text
+    assert "realized_pnl_delta - inactivity_penalty" in help_text
+    assert "--reward-inactivity-penalty" in help_text
+    assert "--inv-penalty" in help_text
+    assert "--reward-inventory-risk-penalty" in help_text
+
+
+def test_parse_args_accepts_short_reward_aliases() -> None:
+    args = train_rl_agent.parse_args(
+        [
+            "--total-timesteps",
+            "128",
+            "--reward-inactivity-penalty",
+            "0.2",
+            "--inv-penalty",
+            "0.1",
+            "--inv-risk-penalty",
+            "0.05",
+        ]
+    )
+
+    assert args.reward_inactivity_penalty == 0.2
+    assert args.reward_inventory_penalty == 0.1
+    assert args.reward_inventory_risk_penalty == 0.05
+
+
+def test_parse_args_accepts_maskable_phase_a_flags() -> None:
+    args = train_rl_agent.parse_args(
+        [
+            "--total-timesteps",
+            "128",
+            "--algorithm",
+            "maskable_ppo",
+            "--include-cancel-action",
+            "--fixed-order-quantity",
+            "2",
+            "--fixed-price-offset-ticks",
+            "3",
+        ]
+    )
+
+    assert args.algorithm == "maskable_ppo"
+    assert args.phase_a_action_space is True
+    assert args.include_cancel_action is True
+    assert args.fixed_order_quantity == 2
+    assert args.fixed_price_offset_ticks == 3
 
 
 def test_default_output_model_uses_preset_and_agent() -> None:
@@ -24,7 +83,7 @@ def test_default_output_model_uses_preset_and_agent() -> None:
 
 
 def test_main_fails_cleanly_when_rl_dependencies_are_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    def _raise() -> tuple[object, object]:
+    def _raise(_algorithm: str) -> tuple[object, object]:
         raise RuntimeError("missing optional RL deps")
 
     monkeypatch.setattr(train_rl_agent, "import_ppo_stack", _raise)
@@ -40,3 +99,46 @@ def test_main_fails_cleanly_when_rl_dependencies_are_missing(monkeypatch: pytest
         )
 
     assert exc_info.value.code == 1
+
+
+def test_build_training_metadata_includes_inventory_risk_penalty(tmp_path: Path) -> None:
+    args = train_rl_agent.parse_args(
+        [
+            "--total-timesteps",
+            "128",
+            "--reward-inactivity-penalty",
+            "0.2",
+            "--reward-inventory-penalty",
+            "0.1",
+            "--reward-inventory-risk-penalty",
+            "0.05",
+        ]
+    )
+    config, horizon = train_rl_agent.build_training_config(args.preset, seed=args.seed, horizon=args.horizon)
+    metadata = train_rl_agent.build_training_metadata(
+        args=args,
+        config=config,
+        effective_horizon=horizon,
+        checkpoint_path=tmp_path / "ppo.zip",
+    )
+
+    assert metadata["reward_inactivity_penalty"] == 0.2
+    assert metadata["reward_inventory_penalty"] == 0.1
+    assert metadata["reward_inventory_risk_penalty"] == 0.05
+    assert metadata["algorithm"] == "ppo"
+    assert metadata["phase_a_action_space"] is True
+    assert metadata["include_cancel_action"] is False
+    assert metadata["fixed_order_quantity"] == 1
+    assert metadata["fixed_price_offset_ticks"] == 1
+    assert metadata["reward_signal"] == "realized_pnl_delta"
+    assert metadata["reward_base_term"] == "realized_pnl_delta"
+    assert metadata["reward_formula"] == (
+        "realized_pnl_delta - inactivity_penalty(if no trade) - abs(inventory) * reward_inventory_penalty - "
+        "inventory^2 * reward_inventory_risk_penalty"
+    )
+    assert metadata["reward_summary"] == (
+        "realized_pnl_delta - 0.2 * inactivity(if no trade) - 0.1 * abs(inventory) - 0.05 * inventory^2"
+    )
+    assert metadata["reward_shaping"]["inactivity_penalty"]["coefficient"] == 0.2
+    assert metadata["reward_shaping"]["linear_inventory_penalty"]["coefficient"] == 0.1
+    assert metadata["reward_shaping"]["quadratic_inventory_risk_penalty"]["coefficient"] == 0.05
