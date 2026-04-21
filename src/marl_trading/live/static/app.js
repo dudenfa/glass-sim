@@ -58,6 +58,7 @@ const state = {
   autoplay: QUERY.get("autoplay") !== "0" && CONFIG.mode !== "paused",
   chartMode: "candles",
   chartTimeframe: CONFIG.defaultChartTimeframe,
+  chartViewOffset: 0,
   backendStateUrl: null,
   backendControlUrl: null,
   timer: null,
@@ -67,8 +68,10 @@ const state = {
   requestQueue: Promise.resolve(),
   lastRenderKey: "",
   lastRenderMode: "",
+  lastRenderOffset: 0,
   snapshot: null,
   chartHover: null,
+  chartPan: null,
   demoWorld: createDemoWorld(CONFIG.seed),
   demoIndex: 0,
   lastError: null,
@@ -220,6 +223,7 @@ function snapshotRenderKey(snapshot) {
     activeAgents,
     state.chartMode,
     state.chartTimeframe,
+    state.chartViewOffset,
   ].join("|");
 }
 
@@ -468,11 +472,11 @@ function normalizeOrderBook(raw) {
   return { bids, asks, fullBids, fullAsks };
 }
 
-function visibleSeriesForMode(snapshot) {
+function buildSeriesForMode(snapshot) {
   const bucketSize = Math.max(1, Number(state.chartTimeframe || 1));
   const aggregated = aggregateChartBuckets(snapshot, bucketSize);
   if (state.chartMode === "candles") {
-    const candles = aggregated.candles.slice(-CHART_WINDOW_SIZE);
+    const candles = aggregated.candles;
     if (candles.length) {
       return {
         series: candles,
@@ -482,7 +486,7 @@ function visibleSeriesForMode(snapshot) {
         })),
       };
     }
-    const lineSeries = aggregated.lineSeries.slice(-CHART_WINDOW_SIZE);
+    const lineSeries = aggregated.lineSeries;
     return {
       series: lineSeries.map((point) => ({
         step_index: point.step_index,
@@ -499,19 +503,55 @@ function visibleSeriesForMode(snapshot) {
       })),
     };
   }
-  const lineSeries = aggregated.lineSeries.slice(-CHART_WINDOW_SIZE);
+  const lineSeries = aggregated.lineSeries;
+  if (lineSeries.length) {
+    return {
+      series: lineSeries,
+      fundamentals: lineSeries.map((point) => ({
+        step_index: point.step_index,
+        value: point.fundamental ?? snapshot.fundamental,
+      })),
+    };
+  }
   return {
-    series: lineSeries.length ? lineSeries : aggregated.candles.slice(-CHART_WINDOW_SIZE).map((candle) => ({
+    series: aggregated.candles.map((candle) => ({
       step_index: candle.end_step ?? candle.step_index,
       midpoint: candle.close,
       fundamental: candle.fundamental ?? snapshot.fundamental,
       volume: candle.volume,
     })),
-    fundamentals: lineSeries.map((point) => ({
-      step_index: point.step_index,
-      value: point.fundamental ?? snapshot.fundamental,
-    })).slice(-CHART_WINDOW_SIZE),
+    fundamentals: aggregated.candles.map((candle) => ({
+      step_index: candle.end_step ?? candle.step_index,
+      value: candle.fundamental ?? snapshot.fundamental,
+    })),
   };
+}
+
+function applyChartWindow(series, fundamentals) {
+  const total = Math.max(series.length, fundamentals.length);
+  if (total <= CHART_WINDOW_SIZE) {
+    state.chartViewOffset = 0;
+    return { series, fundamentals, total };
+  }
+  const maxOffset = Math.max(0, total - CHART_WINDOW_SIZE);
+  state.chartViewOffset = Math.max(0, Math.min(maxOffset, Number(state.chartViewOffset || 0)));
+  const end = total - state.chartViewOffset;
+  const start = Math.max(0, end - CHART_WINDOW_SIZE);
+  return {
+    series: series.slice(start, end),
+    fundamentals: fundamentals.slice(start, end),
+    total,
+  };
+}
+
+function visibleSeriesForMode(snapshot) {
+  const built = buildSeriesForMode(snapshot);
+  return applyChartWindow(built.series, built.fundamentals);
+}
+
+function getMaxChartViewOffset(snapshot) {
+  const built = buildSeriesForMode(snapshot);
+  return Math.max(0, Math.max(built.series.length, built.fundamentals.length) - CHART_WINDOW_SIZE);
 }
 
 function buildTradeVolumeByStep(snapshot) {
@@ -2155,6 +2195,7 @@ async function runPollingTick(generation) {
 
 function setChartMode(mode) {
   state.chartMode = mode;
+  state.chartViewOffset = 0;
   updateModeButtons();
   if (state.snapshot) {
     renderChartPrice(state.snapshot);
@@ -2169,22 +2210,63 @@ function bindEvents() {
   els.chartTimeframe.addEventListener("change", () => {
     const next = Math.max(1, Number.parseInt(els.chartTimeframe.value || "5", 10));
     state.chartTimeframe = next;
+    state.chartViewOffset = 0;
     if (state.snapshot) {
       renderChartPrice(state.snapshot);
       drawChart(state.snapshot);
     }
   });
+  els.priceChart.addEventListener("pointerdown", (event) => {
+    if (!state.snapshot) return;
+    const rect = els.priceChart.getBoundingClientRect();
+    state.chartPan = {
+      pointerId: event.pointerId,
+      x: event.clientX - rect.left,
+      offset: state.chartViewOffset,
+    };
+    els.priceChart.setPointerCapture(event.pointerId);
+  });
   els.priceChart.addEventListener("pointermove", (event) => {
     if (!state.snapshot) return;
     const rect = els.priceChart.getBoundingClientRect();
+    if (state.chartPan && state.chartPan.pointerId === event.pointerId) {
+      const dragX = event.clientX - rect.left;
+      const width = getChartWidthPx();
+      const { series, fundamentals } = visibleSeriesForMode(state.snapshot);
+      const plotWidth = Math.max(1, width - CHART_LAYOUT.padding.left - CHART_LAYOUT.padding.right);
+      const xSlots = Math.max(CHART_WINDOW_SIZE, series.length, fundamentals.length, 1);
+      const xStep = plotWidth / Math.max(1, xSlots - 1);
+      const deltaSteps = Math.round((dragX - state.chartPan.x) / Math.max(1, xStep));
+      const maxOffset = getMaxChartViewOffset(state.snapshot);
+      state.chartViewOffset = Math.max(0, Math.min(maxOffset, state.chartPan.offset + deltaSteps));
+      state.chartHover = null;
+      renderChartPrice(state.snapshot);
+      drawChart(state.snapshot);
+      return;
+    }
     state.chartHover = {
       x: event.clientX - rect.left,
     };
     renderChartPrice(state.snapshot);
     drawChart(state.snapshot);
   });
+  const clearChartPan = (event) => {
+    if (state.chartPan && (!event || state.chartPan.pointerId === event.pointerId)) {
+      if (event) {
+        try {
+          els.priceChart.releasePointerCapture(event.pointerId);
+        } catch (_error) {
+          // Ignore browsers that have already released capture.
+        }
+      }
+      state.chartPan = null;
+    }
+  };
+  els.priceChart.addEventListener("pointerup", clearChartPan);
+  els.priceChart.addEventListener("pointercancel", clearChartPan);
   els.priceChart.addEventListener("pointerleave", () => {
     if (!state.snapshot) return;
+    clearChartPan();
     state.chartHover = null;
     renderChartPrice(state.snapshot);
     drawChart(state.snapshot);

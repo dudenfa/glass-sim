@@ -34,6 +34,7 @@ class LiveServerConfig:
     checkpoint_path: Path | None = None
     learning_agent_id: str | None = None
     learning_agent_starting_inventory: float = 0.0
+    history_limit: int = 5000
 
 
 class _MarketViewHandler(BaseHTTPRequestHandler):
@@ -137,6 +138,7 @@ class MarketViewServer:
         self.session = LiveMarketSession(
             config=config.simulation_config,
             horizon=config.horizon,
+            history_limit=config.history_limit,
             step_delay_seconds=1.0 / max(config.speed, 0.1),
             autoplay=False,
             checkpoint_path=config.checkpoint_path,

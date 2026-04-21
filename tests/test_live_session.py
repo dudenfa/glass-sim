@@ -103,6 +103,7 @@ def test_live_session_bounded_history_window_preserves_step_indices() -> None:
     assert state["summary"]["history_point_count"] == len(history)
     assert "price" in history[-1]
     assert "midpoint" in history[-1]
+    assert "volume" in history[-1]
     assert "last_price" in state["market"]
 
 

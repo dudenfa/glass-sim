@@ -38,7 +38,7 @@ class LiveMarketSession:
         config: SimulationConfig | None = None,
         *,
         horizon: int | None = None,
-        history_limit: int = 600,
+        history_limit: int = 5000,
         event_limit: int = 300,
         step_delay_seconds: float = 0.35,
         autoplay: bool = True,
@@ -286,6 +286,11 @@ class LiveMarketSession:
                 "price": float(price_history[index]),
                 "midpoint": midpoint_history[index] if index < len(midpoint_history) else None,
                 "fundamental": float(fundamental_history[index]) if index < len(fundamental_history) else fallback_fundamental,
+                "volume": 0.0 if index == 0 else float(
+                    self.simulator.step_records[index - 1].trade_count
+                    if index - 1 < len(self.simulator.step_records)
+                    else 0.0
+                ),
             }
             for index in range(start_index, len(price_history))
         ]
