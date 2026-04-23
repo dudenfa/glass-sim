@@ -14,6 +14,7 @@ def test_parse_args_defaults_to_trend_slot() -> None:
     assert args.preset == "baseline"
     assert args.learning_agent_id == "trend_01"
     assert args.learning_agent_starting_inventory == 0.0
+    assert args.train_seeds is None
     assert args.phase_a_action_space is True
     assert args.include_cancel_action is False
     assert args.fixed_order_quantity == 1
@@ -73,6 +74,20 @@ def test_parse_args_accepts_maskable_phase_a_flags() -> None:
     assert args.include_cancel_action is True
     assert args.fixed_order_quantity == 2
     assert args.fixed_price_offset_ticks == 3
+
+
+def test_parse_args_accepts_multi_seed_schedule() -> None:
+    args = train_rl_agent.parse_args(
+        [
+            "--total-timesteps",
+            "128",
+            "--train-seeds",
+            "1,2,7,8",
+        ]
+    )
+
+    assert args.train_seeds == "1,2,7,8"
+    assert train_rl_agent.parse_seed_schedule(args.train_seeds) == (1, 2, 7, 8)
 
 
 def test_default_output_model_uses_preset_and_agent() -> None:
@@ -142,3 +157,24 @@ def test_build_training_metadata_includes_inventory_risk_penalty(tmp_path: Path)
     assert metadata["reward_shaping"]["inactivity_penalty"]["coefficient"] == 0.2
     assert metadata["reward_shaping"]["linear_inventory_penalty"]["coefficient"] == 0.1
     assert metadata["reward_shaping"]["quadratic_inventory_risk_penalty"]["coefficient"] == 0.05
+    assert metadata["train_seeds"] == []
+
+
+def test_build_training_metadata_includes_multi_seed_schedule(tmp_path: Path) -> None:
+    args = train_rl_agent.parse_args(
+        [
+            "--total-timesteps",
+            "128",
+            "--train-seeds",
+            "3,4,9",
+        ]
+    )
+    config, horizon = train_rl_agent.build_training_config(args.preset, seed=args.seed, horizon=args.horizon)
+    metadata = train_rl_agent.build_training_metadata(
+        args=args,
+        config=config,
+        effective_horizon=horizon,
+        checkpoint_path=tmp_path / "ppo.zip",
+    )
+
+    assert metadata["train_seeds"] == [3, 4, 9]

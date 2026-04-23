@@ -77,6 +77,7 @@ _DiscreteSpace = spaces.Discrete if spaces is not None else _FallbackDiscrete
 class SingleAgentEnvConfig:
     learning_agent_id: str
     learning_agent_starting_inventory: float = 0.0
+    train_seeds: tuple[int, ...] = ()
     phase_a_action_space: bool = True
     include_cancel_action: bool = False
     fixed_order_quantity: int = 1
@@ -133,10 +134,14 @@ class SingleAgentMarketEnv:
         self._last_reward: float = 0.0
         self._last_info: dict[str, Any] = {}
         self._reset_count = 0
+        self._seed_schedule_index = 0
         self._last_seed = int(self.config.seed)
         self._processed_event_count = 0
         self._pnl_trackers: dict[str, _PnlTracker] = {}
         self.reset()
+        if self.env_config.train_seeds or self.env_config.auto_increment_seed_on_reset:
+            self._reset_count = 0
+            self._seed_schedule_index = 0
 
     def _default_learning_agent_id(self) -> str:
         if not self.config.agents:
@@ -277,11 +282,20 @@ class SingleAgentMarketEnv:
             return self._advance_until_learning_turn()
         return self._current_observation
 
+    def _next_scheduled_seed(self) -> int | None:
+        if self.env_config.train_seeds:
+            seed = int(self.env_config.train_seeds[self._seed_schedule_index % len(self.env_config.train_seeds)])
+            self._seed_schedule_index += 1
+            return seed
+        if self.env_config.auto_increment_seed_on_reset:
+            return int(self.config.seed + self._reset_count * self.env_config.seed_stride)
+        return None
+
     def reset(self, *, seed: int | None = None, horizon: int | None = None) -> tuple[float, ...]:
         self.horizon = int(self.horizon if horizon is None else horizon)
         runtime_seed = seed
-        if runtime_seed is None and self.env_config.auto_increment_seed_on_reset:
-            runtime_seed = int(self.config.seed + self._reset_count * self.env_config.seed_stride)
+        if runtime_seed is None:
+            runtime_seed = self._next_scheduled_seed()
         if runtime_seed is None:
             runtime_seed = int(self.config.seed)
         self._last_seed = int(runtime_seed)
@@ -300,6 +314,7 @@ class SingleAgentMarketEnv:
             "seed": int(self._last_seed),
             "horizon": int(self.horizon),
             "learning_agent_id": self.env_config.learning_agent_id,
+            "train_seeds": list(self.env_config.train_seeds),
             "step_index": int(self.simulator.current_step_index) if self.simulator is not None else 0,
             "portfolio_active": bool(observation.portfolio_active),
         }

@@ -55,6 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Agent slot to replace at runtime with the RL controller.",
     )
     parser.add_argument("--seed", type=int, default=None, help="Base seed for training episodes.")
+    parser.add_argument(
+        "--train-seeds",
+        default=None,
+        help="Comma-separated seed schedule for multi-seed training episodes. Overrides auto-increment base-seed resets when provided.",
+    )
     parser.add_argument("--horizon", type=int, default=None, help="Override the preset event horizon.")
     parser.add_argument("--total-timesteps", type=int, default=50_000, help="Total PPO training timesteps.")
     parser.add_argument(
@@ -187,6 +192,16 @@ def build_training_config(
     return config, effective_horizon
 
 
+def parse_seed_schedule(raw: str | None) -> tuple[int, ...]:
+    if raw is None:
+        return ()
+    values = [chunk.strip() for chunk in str(raw).split(",")]
+    cleaned = tuple(int(value) for value in values if value)
+    if raw is not None and not cleaned:
+        raise ValueError("Expected at least one integer in --train-seeds.")
+    return cleaned
+
+
 def default_checkpoint_path(preset_name: str, learning_agent_id: str) -> Path:
     return DEFAULT_CHECKPOINT_DIR / f"ppo_{preset_name}_{learning_agent_id}.zip"
 
@@ -255,6 +270,7 @@ def build_training_metadata(
         "algorithm": str(args.algorithm),
         "learning_agent_id": str(args.learning_agent_id),
         "seed": int(config.seed),
+        "train_seeds": list(parse_seed_schedule(args.train_seeds)),
         "horizon": int(effective_horizon),
         "total_timesteps": int(args.total_timesteps),
         "learning_agent_starting_inventory": float(args.learning_agent_starting_inventory),
@@ -286,12 +302,14 @@ def train_ppo_agent(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("MaskablePPO is currently supported only with the simplified Phase A action space.")
 
     config, effective_horizon = build_training_config(args.preset, seed=args.seed, horizon=args.horizon)
+    train_seeds = parse_seed_schedule(args.train_seeds)
     checkpoint_path = resolve_checkpoint_path(args)
     validate_checkpoint_target(checkpoint_path, force_overwrite=bool(args.force_overwrite))
 
     env_config = SingleAgentEnvConfig(
         learning_agent_id=str(args.learning_agent_id),
         learning_agent_starting_inventory=float(args.learning_agent_starting_inventory),
+        train_seeds=train_seeds,
         phase_a_action_space=bool(args.phase_a_action_space),
         include_cancel_action=bool(args.include_cancel_action),
         fixed_order_quantity=int(args.fixed_order_quantity),
@@ -300,7 +318,7 @@ def train_ppo_agent(args: argparse.Namespace) -> dict[str, Any]:
         reward_inventory_penalty=float(args.reward_inventory_penalty),
         reward_inventory_risk_penalty=float(args.reward_inventory_risk_penalty),
         reward_inactivity_penalty=float(args.reward_inactivity_penalty),
-        auto_increment_seed_on_reset=True,
+        auto_increment_seed_on_reset=not bool(train_seeds),
     )
     core_env = SingleAgentMarketEnv(config=config, env_config=env_config, horizon=effective_horizon)
     gym_env = GymSingleAgentMarketEnv(

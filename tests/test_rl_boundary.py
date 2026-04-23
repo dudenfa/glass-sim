@@ -575,6 +575,31 @@ def test_gym_wrapper_exposes_spaces_and_reset_semantics() -> None:
     assert info_2["seed"] == info_1["seed"] + 1
 
 
+def test_gym_wrapper_cycles_explicit_train_seed_schedule() -> None:
+    config = default_simulation_config()
+    core_env = SingleAgentMarketEnv(
+        config=replace(config),
+        env_config=SingleAgentEnvConfig(
+            learning_agent_id="trend_01",
+            train_seeds=(3, 5, 8),
+            auto_increment_seed_on_reset=False,
+        ),
+        horizon=24,
+    )
+    gym_env = GymSingleAgentMarketEnv(core_env, max_quantity=2, max_price_offset_ticks=4)
+
+    _obs_1, info_1 = gym_env.reset()
+    _obs_2, info_2 = gym_env.reset()
+    _obs_3, info_3 = gym_env.reset()
+    _obs_4, info_4 = gym_env.reset()
+
+    assert info_1["train_seeds"] == [3, 5, 8]
+    assert info_1["seed"] == 3
+    assert info_2["seed"] == 5
+    assert info_3["seed"] == 8
+    assert info_4["seed"] == 3
+
+
 def test_gym_wrapper_uses_fixed_phase_a_quantity_and_offset() -> None:
     config = default_simulation_config()
     core_env = SingleAgentMarketEnv(
