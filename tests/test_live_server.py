@@ -52,7 +52,30 @@ def test_live_server_cli_parses_runtime_rl_flags(monkeypatch) -> None:
     args = parse_args()
     assert args.checkpoint == Path("checkpoints/ppo_baseline_trend_01.zip")
     assert args.learning_agent_id == "trend_01"
+    assert args.add_learning_agent is False
+    assert args.learning_agent_template_id is None
     assert args.learning_agent_starting_inventory == 0.0
+
+
+def test_live_server_cli_parses_add_learning_agent_flags(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "serve_market_view.py",
+            "--checkpoint",
+            "checkpoints/ppo_baseline_rl_01.zip",
+            "--learning-agent-id",
+            "rl_01",
+            "--add-learning-agent",
+            "--learning-agent-template-id",
+            "trend_01",
+        ],
+    )
+    args = parse_args()
+    assert args.learning_agent_id == "rl_01"
+    assert args.add_learning_agent is True
+    assert args.learning_agent_template_id == "trend_01"
 
 
 def test_live_server_endpoints() -> None:

@@ -15,6 +15,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from marl_trading.configs import available_preset_names, build_preset_config, get_preset
 from marl_trading.core.config import SimulationConfig
+from marl_trading.rl.scenario import prepare_learning_agent_config
 
 DEFAULT_CHECKPOINT_DIR = REPO_ROOT / "checkpoints"
 ALGORITHM_CHOICES = ("ppo", "maskable_ppo")
@@ -53,6 +54,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--learning-agent-id",
         default="trend_01",
         help="Agent slot to replace at runtime with the RL controller.",
+    )
+    parser.add_argument(
+        "--add-learning-agent",
+        action="store_true",
+        help="Add the RL agent as a new participant instead of replacing an existing scripted slot.",
+    )
+    parser.add_argument(
+        "--learning-agent-template-id",
+        default=None,
+        help="Existing scripted agent id to clone when --add-learning-agent is enabled.",
     )
     parser.add_argument("--seed", type=int, default=None, help="Base seed for training episodes.")
     parser.add_argument(
@@ -184,10 +195,19 @@ def build_training_config(
     *,
     seed: int | None = None,
     horizon: int | None = None,
+    learning_agent_id: str = "trend_01",
+    add_learning_agent: bool = False,
+    learning_agent_template_id: str | None = None,
 ) -> tuple[SimulationConfig, int]:
     config = build_preset_config(preset_name)
     if seed is not None:
         config = replace(config, seed=int(seed))
+    config = prepare_learning_agent_config(
+        config,
+        learning_agent_id=learning_agent_id,
+        add_learning_agent=add_learning_agent,
+        learning_agent_template_id=learning_agent_template_id,
+    )
     effective_horizon = int(horizon if horizon is not None else config.market.event_horizon)
     return config, effective_horizon
 
@@ -269,6 +289,8 @@ def build_training_metadata(
         "description": get_preset(str(args.preset)).description,
         "algorithm": str(args.algorithm),
         "learning_agent_id": str(args.learning_agent_id),
+        "add_learning_agent": bool(args.add_learning_agent),
+        "learning_agent_template_id": None if args.learning_agent_template_id is None else str(args.learning_agent_template_id),
         "seed": int(config.seed),
         "train_seeds": list(parse_seed_schedule(args.train_seeds)),
         "horizon": int(effective_horizon),
@@ -289,7 +311,7 @@ def build_training_metadata(
         "gamma": float(args.gamma),
         "device": str(args.device),
         "checkpoint": str(checkpoint_path),
-        "runtime_slot_replacement": True,
+        "runtime_learning_agent_mode": "add" if bool(args.add_learning_agent) else "replace",
         **reward_metadata,
     }
 
@@ -301,7 +323,14 @@ def train_ppo_agent(args: argparse.Namespace) -> dict[str, Any]:
     if str(args.algorithm) == "maskable_ppo" and not bool(args.phase_a_action_space):
         raise ValueError("MaskablePPO is currently supported only with the simplified Phase A action space.")
 
-    config, effective_horizon = build_training_config(args.preset, seed=args.seed, horizon=args.horizon)
+    config, effective_horizon = build_training_config(
+        args.preset,
+        seed=args.seed,
+        horizon=args.horizon,
+        learning_agent_id=str(args.learning_agent_id),
+        add_learning_agent=bool(args.add_learning_agent),
+        learning_agent_template_id=None if args.learning_agent_template_id is None else str(args.learning_agent_template_id),
+    )
     train_seeds = parse_seed_schedule(args.train_seeds)
     checkpoint_path = resolve_checkpoint_path(args)
     validate_checkpoint_target(checkpoint_path, force_overwrite=bool(args.force_overwrite))

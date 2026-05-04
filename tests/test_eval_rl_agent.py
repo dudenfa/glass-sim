@@ -13,6 +13,8 @@ def test_parse_args_requires_checkpoint() -> None:
     assert args.checkpoint == Path("model.zip")
     assert args.algorithm == "auto"
     assert args.learning_agent_id == "trend_01"
+    assert args.add_learning_agent is False
+    assert args.learning_agent_template_id is None
     assert args.learning_agent_starting_inventory == 0.0
     assert args.phase_a_action_space is True
     assert args.include_cancel_action is False
@@ -75,6 +77,24 @@ def test_parse_args_accepts_maskable_phase_a_flags() -> None:
     assert args.fixed_price_offset_ticks == 3
 
 
+def test_parse_args_accepts_add_learning_agent_mode() -> None:
+    args = eval_rl_agent.parse_args(
+        [
+            "--checkpoint",
+            "model.zip",
+            "--learning-agent-id",
+            "rl_01",
+            "--add-learning-agent",
+            "--learning-agent-template-id",
+            "trend_01",
+        ]
+    )
+
+    assert args.learning_agent_id == "rl_01"
+    assert args.add_learning_agent is True
+    assert args.learning_agent_template_id == "trend_01"
+
+
 def test_normalize_checkpoint_load_path_strips_zip_suffix(tmp_path: Path) -> None:
     checkpoint = tmp_path / "ppo_test.zip"
 
@@ -104,6 +124,8 @@ def test_build_rl_evaluation_payload_matches_market_health_shape(tmp_path: Path)
         algorithm="maskable_ppo",
         preset_name="baseline",
         learning_agent_id="trend_01",
+        add_learning_agent=False,
+        learning_agent_template_id=None,
         learning_agent_starting_inventory=0.0,
         phase_a_action_space=True,
         include_cancel_action=False,
@@ -123,6 +145,8 @@ def test_build_rl_evaluation_payload_matches_market_health_shape(tmp_path: Path)
     assert payload["label"] == "baseline_rl"
     assert payload["metadata"]["algorithm"] == "maskable_ppo"
     assert payload["metadata"]["learning_agent_id"] == "trend_01"
+    assert payload["metadata"]["add_learning_agent"] is False
+    assert payload["metadata"]["learning_agent_template_id"] is None
     assert payload["metadata"]["learning_agent_starting_inventory"] == 0.0
     assert payload["metadata"]["phase_a_action_space"] is True
     assert payload["metadata"]["include_cancel_action"] is False
@@ -143,6 +167,7 @@ def test_build_rl_evaluation_payload_matches_market_health_shape(tmp_path: Path)
     assert payload["metadata"]["reward_shaping"]["inactivity_penalty"]["coefficient"] == 0.2
     assert payload["metadata"]["reward_shaping"]["linear_inventory_penalty"]["coefficient"] == 0.1
     assert payload["metadata"]["reward_shaping"]["quadratic_inventory_risk_penalty"]["coefficient"] == 0.05
+    assert payload["metadata"]["runtime_learning_agent_mode"] == "replace"
     assert payload["summary"]["trade_count"] >= 0
     assert isinstance(payload["portfolio_breakdown"], list)
     assert payload["agents"] == payload["portfolio_breakdown"]
@@ -158,6 +183,8 @@ def test_build_rl_evaluation_payload_adjusts_learning_slot_starting_inventory(tm
         algorithm="ppo",
         preset_name="baseline",
         learning_agent_id="trend_01",
+        add_learning_agent=False,
+        learning_agent_template_id=None,
         learning_agent_starting_inventory=0.0,
         phase_a_action_space=True,
         include_cancel_action=False,
@@ -176,3 +203,16 @@ def test_build_rl_evaluation_payload_adjusts_learning_slot_starting_inventory(tm
     trend = next(agent for agent in payload["portfolio_breakdown"] if agent["agent_id"] == "trend_01")
     assert trend["starting_inventory"] == 0.0
     assert trend["starting_equity"] == 10000.0
+
+
+def test_build_eval_config_can_add_learning_agent() -> None:
+    config, horizon = eval_rl_agent.build_eval_config(
+        "baseline",
+        learning_agent_id="rl_01",
+        add_learning_agent=True,
+        learning_agent_template_id="trend_01",
+    )
+
+    assert horizon == config.market.event_horizon
+    agent_ids = [agent.agent_id.value for agent in config.agents]
+    assert agent_ids == ["maker_01", "retail_01", "informed_01", "trend_01", "rl_01"]

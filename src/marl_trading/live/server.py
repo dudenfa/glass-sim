@@ -202,6 +202,16 @@ def parse_args() -> argparse.Namespace:
         help="Agent id replaced at runtime by the PPO policy when --checkpoint is provided.",
     )
     parser.add_argument(
+        "--add-learning-agent",
+        action="store_true",
+        help="Add the PPO agent as a new participant instead of replacing an existing scripted slot.",
+    )
+    parser.add_argument(
+        "--learning-agent-template-id",
+        default=None,
+        help="Existing scripted agent id to clone when --add-learning-agent is enabled.",
+    )
+    parser.add_argument(
         "--learning-agent-starting-inventory",
         type=float,
         default=0.0,

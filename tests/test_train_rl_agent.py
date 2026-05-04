@@ -13,6 +13,8 @@ def test_parse_args_defaults_to_trend_slot() -> None:
     assert args.algorithm == "ppo"
     assert args.preset == "baseline"
     assert args.learning_agent_id == "trend_01"
+    assert args.add_learning_agent is False
+    assert args.learning_agent_template_id is None
     assert args.learning_agent_starting_inventory == 0.0
     assert args.train_seeds is None
     assert args.phase_a_action_space is True
@@ -90,6 +92,24 @@ def test_parse_args_accepts_multi_seed_schedule() -> None:
     assert train_rl_agent.parse_seed_schedule(args.train_seeds) == (1, 2, 7, 8)
 
 
+def test_parse_args_accepts_add_learning_agent_mode() -> None:
+    args = train_rl_agent.parse_args(
+        [
+            "--total-timesteps",
+            "128",
+            "--learning-agent-id",
+            "rl_01",
+            "--add-learning-agent",
+            "--learning-agent-template-id",
+            "trend_01",
+        ]
+    )
+
+    assert args.learning_agent_id == "rl_01"
+    assert args.add_learning_agent is True
+    assert args.learning_agent_template_id == "trend_01"
+
+
 def test_default_output_model_uses_preset_and_agent() -> None:
     checkpoint = train_rl_agent.default_checkpoint_path("baseline", "trend_01")
 
@@ -158,6 +178,9 @@ def test_build_training_metadata_includes_inventory_risk_penalty(tmp_path: Path)
     assert metadata["reward_shaping"]["linear_inventory_penalty"]["coefficient"] == 0.1
     assert metadata["reward_shaping"]["quadratic_inventory_risk_penalty"]["coefficient"] == 0.05
     assert metadata["train_seeds"] == []
+    assert metadata["add_learning_agent"] is False
+    assert metadata["learning_agent_template_id"] is None
+    assert metadata["runtime_learning_agent_mode"] == "replace"
 
 
 def test_build_training_metadata_includes_multi_seed_schedule(tmp_path: Path) -> None:
@@ -178,3 +201,18 @@ def test_build_training_metadata_includes_multi_seed_schedule(tmp_path: Path) ->
     )
 
     assert metadata["train_seeds"] == [3, 4, 9]
+
+
+def test_build_training_config_can_add_learning_agent() -> None:
+    config, horizon = train_rl_agent.build_training_config(
+        "baseline",
+        learning_agent_id="rl_01",
+        add_learning_agent=True,
+        learning_agent_template_id="trend_01",
+    )
+
+    assert horizon == config.market.event_horizon
+    agent_ids = [agent.agent_id.value for agent in config.agents]
+    assert agent_ids == ["maker_01", "retail_01", "informed_01", "trend_01", "rl_01"]
+    cloned = next(agent for agent in config.agents if agent.agent_id.value == "rl_01")
+    assert cloned.agent_type == "trend_follower"
