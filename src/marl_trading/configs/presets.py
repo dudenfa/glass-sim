@@ -55,6 +55,13 @@ def baseline_preset() -> SimulationConfig:
     return default_simulation_config()
 
 
+def baseline_trend_duo_preset() -> SimulationConfig:
+    base = default_simulation_config()
+    trend = next(agent for agent in base.agents if agent.agent_id.value == "trend_01")
+    trend_clone = replace(trend, agent_id=AgentId("trend_02"))
+    return replace(base, agents=tuple(base.agents) + (trend_clone,))
+
+
 def high_news_preset() -> SimulationConfig:
     base = default_simulation_config()
     return _with_agent_updates(
@@ -187,6 +194,11 @@ PRESETS: Final[dict[str, PresetDefinition]] = {
         description="Default balanced market with the current simulator settings.",
         build=baseline_preset,
     ),
+    "baseline_trend_duo": PresetDefinition(
+        name="baseline_trend_duo",
+        description="Baseline market with a second scripted trend follower added as a fifth participant.",
+        build=baseline_trend_duo_preset,
+    ),
     "high_news": PresetDefinition(
         name="high_news",
         description="News-sensitive market with stronger reactions to public shocks.",
@@ -222,6 +234,7 @@ __all__ = [
     "PRESETS",
     "available_preset_names",
     "baseline_preset",
+    "baseline_trend_duo_preset",
     "build_preset_config",
     "fragile_liquidity_preset",
     "get_preset",
