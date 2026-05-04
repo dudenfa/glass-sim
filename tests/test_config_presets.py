@@ -3,7 +3,6 @@ from __future__ import annotations
 from marl_trading.configs import (
     available_preset_names,
     baseline_preset,
-    baseline_trend_duo_preset,
     build_preset_config,
     fragile_liquidity_preset,
     high_information_asymmetry_preset,
@@ -24,7 +23,6 @@ def test_named_presets_build_valid_simulation_configs() -> None:
     names = available_preset_names()
     assert names == (
         "baseline",
-        "baseline_trend_duo",
         "high_news",
         "fragile_liquidity",
         "high_information_asymmetry",
@@ -32,7 +30,6 @@ def test_named_presets_build_valid_simulation_configs() -> None:
 
     builders = {
         "baseline": baseline_preset,
-        "baseline_trend_duo": baseline_trend_duo_preset,
         "high_news": high_news_preset,
         "fragile_liquidity": fragile_liquidity_preset,
         "high_information_asymmetry": high_information_asymmetry_preset,
@@ -50,19 +47,9 @@ def test_named_presets_build_valid_simulation_configs() -> None:
 
 def test_preset_differences_are_intentional() -> None:
     baseline = build_preset_config("baseline")
-    baseline_trend_duo = build_preset_config("baseline_trend_duo")
     high_news = build_preset_config("high_news")
     fragile = build_preset_config("fragile_liquidity")
     high_info = build_preset_config("high_information_asymmetry")
-
-    assert len(baseline_trend_duo.agents) == len(baseline.agents) + 1
-    assert any(agent.agent_id.value == "trend_02" for agent in baseline_trend_duo.agents)
-    trend_01 = next(agent for agent in baseline_trend_duo.agents if agent.agent_id.value == "trend_01")
-    trend_02 = next(agent for agent in baseline_trend_duo.agents if agent.agent_id.value == "trend_02")
-    assert trend_02.agent_type == "trend_follower"
-    assert trend_02.starting_cash == trend_01.starting_cash
-    assert trend_02.max_resting_orders == trend_01.max_resting_orders
-    assert trend_02.behavior == trend_01.behavior
 
     assert high_news.market.event_horizon == baseline.market.event_horizon
     assert high_news.enable_news is True
