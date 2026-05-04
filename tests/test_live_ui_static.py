@@ -14,6 +14,7 @@ def test_live_ui_shell_contains_compact_panels() -> None:
         "main-column",
         "connectionStatus",
         "modeStatus",
+        "seedStatus",
         "marketTitle",
         "marketTimestamp",
         "marketPrice",
@@ -97,6 +98,8 @@ def test_live_ui_script_supports_live_polling_and_demo_fallback() -> None:
         "bindTradeContextTooltipEvents",
         "trade-context-tooltip",
         "order-context",
+        'seed: Number(firstDefined(session, ["seed"], CONFIG.seed))',
+        "els.seedStatus.textContent",
     ]:
         assert token in js
 

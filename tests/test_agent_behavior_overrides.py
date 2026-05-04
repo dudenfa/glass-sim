@@ -56,6 +56,10 @@ def test_simulator_applies_scripted_agent_behavior_overrides() -> None:
                     noise_trader=NoiseTraderBehaviorConfig(
                         aggressiveness=0.95,
                         market_order_probability=0.12,
+                        sell_bias=0.7,
+                        inventory_recycling_bias=0.35,
+                        overpricing_sell_bias=0.4,
+                        profit_taking_bias=0.2,
                     ),
                 ),
             ),
@@ -69,6 +73,9 @@ def test_simulator_applies_scripted_agent_behavior_overrides() -> None:
                     trend_follower=TrendFollowerBehaviorConfig(
                         threshold_bps=3.8,
                         market_order_probability=0.15,
+                        exit_threshold_bps=0.7,
+                        overpricing_exit_bias=1.2,
+                        inventory_pressure=0.8,
                     ),
                 ),
             ),
@@ -85,6 +92,9 @@ def test_simulator_applies_scripted_agent_behavior_overrides() -> None:
                         signal_noise=0.02,
                         news_bias=2.75,
                         threshold_bps=0.45,
+                        sell_bias=1.9,
+                        negative_news_sell_bias=1.4,
+                        inventory_pressure=0.85,
                     ),
                 ),
             ),
@@ -113,21 +123,34 @@ def test_simulator_applies_scripted_agent_behavior_overrides() -> None:
     noise = simulator.agents["noise_01"]
     assert noise.aggressiveness == 0.95
     assert noise.market_order_probability == 0.12
+    assert noise.sell_bias == 0.7
+    assert noise.inventory_recycling_bias == 0.35
+    assert noise.overpricing_sell_bias == 0.4
+    assert noise.profit_taking_bias == 0.2
 
     trend = simulator.agents["trend_01"]
     assert trend.threshold_bps == 3.8
     assert trend.market_order_probability == 0.15
+    assert trend.exit_threshold_bps == 0.7
+    assert trend.overpricing_exit_bias == 1.2
+    assert trend.inventory_pressure == 0.8
 
     informed = simulator.agents["informed_01"]
     assert config.agents[-1].private_signal_strength == 0.0
     assert informed.signal_noise == 0.02
     assert informed.news_bias == 2.75
     assert informed.threshold_bps == 0.45
+    assert informed.sell_bias == 1.9
+    assert informed.negative_news_sell_bias == 1.4
+    assert informed.inventory_pressure == 0.85
     # The nested behavior override is what should drive the signal strength here.
     informed_kwargs = simulator._informed_trader_kwargs(config.agents[-1])
     assert informed_kwargs["signal_noise"] == 0.02
     assert informed_kwargs["news_bias"] == 2.75
     assert informed_kwargs["threshold_bps"] == 0.45
+    assert informed_kwargs["sell_bias"] == 1.9
+    assert informed_kwargs["negative_news_sell_bias"] == 1.4
+    assert informed_kwargs["inventory_pressure"] == 0.85
 
 
 def test_simulator_uses_legacy_defaults_without_behavior_overrides() -> None:
@@ -156,15 +179,25 @@ def test_simulator_uses_legacy_defaults_without_behavior_overrides() -> None:
     noise = simulator.agents["retail_01"]
     assert noise.aggressiveness == 0.55
     assert noise.market_order_probability == 0.7
+    assert noise.sell_bias == 0.5
+    assert noise.inventory_recycling_bias == 0.2
+    assert noise.overpricing_sell_bias == 0.15
+    assert noise.profit_taking_bias == 0.1
 
     trend = simulator.agents["trend_01"]
     assert trend.threshold_bps == 1.5
     assert trend.market_order_probability == 0.5
+    assert trend.exit_threshold_bps == 0.6
+    assert trend.overpricing_exit_bias == 0.9
+    assert trend.inventory_pressure == 0.5
 
     informed = simulator.agents["informed_01"]
     assert informed.signal_noise == 0.3
     assert informed.news_bias == 1.25
     assert informed.threshold_bps == 1.0
+    assert informed.sell_bias == 1.35
+    assert informed.negative_news_sell_bias == 0.9
+    assert informed.inventory_pressure == 0.6
 
 
 def test_market_maker_side_specific_padding_overrides_symmetric_padding() -> None:

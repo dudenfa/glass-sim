@@ -58,6 +58,38 @@ def test_noise_trader_can_emit_market_order() -> None:
     assert intent.order_type is OrderType.MARKET
 
 
+def test_noise_trader_leans_to_sell_when_long_and_price_is_rich() -> None:
+    class DummyRng:
+        def __init__(self) -> None:
+            self.values = iter([0.1, 0.4, 0.1, 0.0])
+
+        def random(self) -> float:
+            return next(self.values)
+
+    agent = NoiseTraderAgent(
+        "noise_01",
+        aggressiveness=1.0,
+        market_order_probability=1.0,
+        sell_bias=0.35,
+        inventory_recycling_bias=0.25,
+        overpricing_sell_bias=0.25,
+        profit_taking_bias=0.15,
+    )
+    intents = agent.decide(
+        _observation(
+            agent_type="noise_trader",
+            midpoint=100.3,
+            latent_fundamental=99.9,
+            agent_inventory=20.0,
+            recent_returns_bps=(6.0, 8.0, 10.0),
+        ),
+        rng=DummyRng(),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].side is Side.SELL
+
+
 def test_trend_follower_responds_to_positive_returns() -> None:
     agent = TrendFollowerAgent("trend_01", threshold_bps=1.0, market_order_probability=0.0)
     intents = agent.decide(_observation(agent_type="trend_follower"), rng=__import__("numpy").random.default_rng(7))
@@ -68,6 +100,52 @@ def test_trend_follower_responds_to_positive_returns() -> None:
     assert intent.order_type is OrderType.LIMIT
 
 
+def test_trend_follower_exits_long_when_momentum_turns_negative() -> None:
+    agent = TrendFollowerAgent(
+        "trend_01",
+        threshold_bps=2.0,
+        exit_threshold_bps=0.5,
+        market_order_probability=0.0,
+        inventory_pressure=0.5,
+    )
+    intents = agent.decide(
+        _observation(
+            agent_type="trend_follower",
+            recent_returns_bps=(-1.0, -1.5, -2.0),
+            agent_inventory=12.0,
+        ),
+        rng=__import__("numpy").random.default_rng(7),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].side is Side.SELL
+    assert intents[0].annotation == "trend_exit"
+
+
+def test_trend_follower_exits_rich_long_when_price_is_above_fundamental() -> None:
+    agent = TrendFollowerAgent(
+        "trend_01",
+        threshold_bps=3.0,
+        exit_threshold_bps=0.5,
+        market_order_probability=0.0,
+        overpricing_exit_bias=1.4,
+        inventory_pressure=0.5,
+    )
+    intents = agent.decide(
+        _observation(
+            agent_type="trend_follower",
+            recent_returns_bps=(0.2, 0.4, 0.3),
+            midpoint=100.6,
+            latent_fundamental=99.9,
+            agent_inventory=18.0,
+        ),
+        rng=__import__("numpy").random.default_rng(7),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].side is Side.SELL
+
+
 def test_informed_trader_responds_to_fundamental_gap() -> None:
     agent = InformedTraderAgent("inf_01", signal_noise=0.0, threshold_bps=0.5)
     intents = agent.decide(_observation(agent_type="informed_trader", latent_fundamental=101.5), rng=__import__("numpy").random.default_rng(7))
@@ -75,6 +153,55 @@ def test_informed_trader_responds_to_fundamental_gap() -> None:
     assert len(intents) == 1
     intent = intents[0]
     assert intent.side is Side.BUY
+
+
+def test_informed_trader_uses_sell_bias_for_small_overpricing() -> None:
+    agent = InformedTraderAgent(
+        "inf_01",
+        signal_noise=0.0,
+        threshold_bps=3.0,
+        sell_bias=2.0,
+        inventory_pressure=1.0,
+    )
+    intents = agent.decide(
+        _observation(
+            agent_type="informed_trader",
+            midpoint=100.0,
+            latent_fundamental=99.98,
+            best_bid=99.99,
+            best_ask=100.01,
+            agent_inventory=20.0,
+        ),
+        rng=__import__("numpy").random.default_rng(7),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].side is Side.SELL
+    assert intents[0].order_type is OrderType.LIMIT
+
+
+def test_informed_trader_negative_news_pushes_long_inventory_to_sell() -> None:
+    agent = InformedTraderAgent(
+        "inf_01",
+        signal_noise=0.0,
+        threshold_bps=2.5,
+        news_bias=0.5,
+        negative_news_sell_bias=1.5,
+        inventory_pressure=0.8,
+    )
+    intents = agent.decide(
+        _observation(
+            agent_type="informed_trader",
+            midpoint=100.4,
+            latent_fundamental=100.2,
+            news_severity=-0.4,
+            agent_inventory=18.0,
+        ),
+        rng=__import__("numpy").random.default_rng(7),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].side is Side.SELL
 
 
 def test_market_maker_returns_two_sided_quotes_in_normal_mode() -> None:

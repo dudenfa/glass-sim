@@ -37,12 +37,19 @@ class MarketMakerBehaviorConfig:
 class NoiseTraderBehaviorConfig:
     aggressiveness: float | None = None
     market_order_probability: float | None = None
+    sell_bias: float | None = None
+    inventory_recycling_bias: float | None = None
+    overpricing_sell_bias: float | None = None
+    profit_taking_bias: float | None = None
 
 
 @dataclass(frozen=True)
 class TrendFollowerBehaviorConfig:
     threshold_bps: float | None = None
     market_order_probability: float | None = None
+    exit_threshold_bps: float | None = None
+    overpricing_exit_bias: float | None = None
+    inventory_pressure: float | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +58,9 @@ class InformedTraderBehaviorConfig:
     signal_noise: float | None = None
     news_bias: float | None = None
     threshold_bps: float | None = None
+    sell_bias: float | None = None
+    negative_news_sell_bias: float | None = None
+    inventory_pressure: float | None = None
 
 
 @dataclass(frozen=True)

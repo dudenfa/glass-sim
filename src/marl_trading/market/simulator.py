@@ -221,6 +221,10 @@ class SyntheticMarketSimulator:
     def _noise_trader_kwargs(self, agent_cfg: AgentConfig) -> dict[str, object]:
         aggressiveness = 0.55
         market_order_probability = 0.7
+        sell_bias = 0.5
+        inventory_recycling_bias = 0.2
+        overpricing_sell_bias = 0.15
+        profit_taking_bias = 0.1
         behavior = self._behavior(agent_cfg)
         noise_behavior = behavior.noise_trader if behavior is not None else None
         if noise_behavior is not None:
@@ -228,16 +232,31 @@ class SyntheticMarketSimulator:
                 aggressiveness = float(noise_behavior.aggressiveness)
             if noise_behavior.market_order_probability is not None:
                 market_order_probability = float(noise_behavior.market_order_probability)
+            if noise_behavior.sell_bias is not None:
+                sell_bias = float(noise_behavior.sell_bias)
+            if noise_behavior.inventory_recycling_bias is not None:
+                inventory_recycling_bias = float(noise_behavior.inventory_recycling_bias)
+            if noise_behavior.overpricing_sell_bias is not None:
+                overpricing_sell_bias = float(noise_behavior.overpricing_sell_bias)
+            if noise_behavior.profit_taking_bias is not None:
+                profit_taking_bias = float(noise_behavior.profit_taking_bias)
         return {
             "agent_id": agent_cfg.agent_id,
             "max_resting_orders": agent_cfg.max_resting_orders,
             "aggressiveness": aggressiveness,
             "market_order_probability": market_order_probability,
+            "sell_bias": sell_bias,
+            "inventory_recycling_bias": inventory_recycling_bias,
+            "overpricing_sell_bias": overpricing_sell_bias,
+            "profit_taking_bias": profit_taking_bias,
         }
 
     def _trend_follower_kwargs(self, agent_cfg: AgentConfig) -> dict[str, object]:
         threshold_bps = 1.5
         market_order_probability = 0.5
+        exit_threshold_bps = 0.6
+        overpricing_exit_bias = 0.9
+        inventory_pressure = 0.5
         behavior = self._behavior(agent_cfg)
         trend_behavior = behavior.trend_follower if behavior is not None else None
         if trend_behavior is not None:
@@ -245,11 +264,20 @@ class SyntheticMarketSimulator:
                 threshold_bps = float(trend_behavior.threshold_bps)
             if trend_behavior.market_order_probability is not None:
                 market_order_probability = float(trend_behavior.market_order_probability)
+            if trend_behavior.exit_threshold_bps is not None:
+                exit_threshold_bps = float(trend_behavior.exit_threshold_bps)
+            if trend_behavior.overpricing_exit_bias is not None:
+                overpricing_exit_bias = float(trend_behavior.overpricing_exit_bias)
+            if trend_behavior.inventory_pressure is not None:
+                inventory_pressure = float(trend_behavior.inventory_pressure)
         return {
             "agent_id": agent_cfg.agent_id,
             "max_resting_orders": agent_cfg.max_resting_orders,
             "threshold_bps": threshold_bps,
             "market_order_probability": market_order_probability,
+            "exit_threshold_bps": exit_threshold_bps,
+            "overpricing_exit_bias": overpricing_exit_bias,
+            "inventory_pressure": inventory_pressure,
         }
 
     def _informed_trader_kwargs(self, agent_cfg: AgentConfig) -> dict[str, object]:
@@ -257,6 +285,9 @@ class SyntheticMarketSimulator:
         signal_noise = max(0.05, 0.5 - private_signal_strength * 0.2)
         news_bias = 1.25
         threshold_bps = 1.0
+        sell_bias = 1.35
+        negative_news_sell_bias = 0.9
+        inventory_pressure = 0.6
         behavior = self._behavior(agent_cfg)
         informed_behavior = behavior.informed_trader if behavior is not None else None
         if informed_behavior is not None:
@@ -266,6 +297,12 @@ class SyntheticMarketSimulator:
                 news_bias = float(informed_behavior.news_bias)
             if informed_behavior.threshold_bps is not None:
                 threshold_bps = float(informed_behavior.threshold_bps)
+            if informed_behavior.sell_bias is not None:
+                sell_bias = float(informed_behavior.sell_bias)
+            if informed_behavior.negative_news_sell_bias is not None:
+                negative_news_sell_bias = float(informed_behavior.negative_news_sell_bias)
+            if informed_behavior.inventory_pressure is not None:
+                inventory_pressure = float(informed_behavior.inventory_pressure)
         if informed_behavior is not None and informed_behavior.signal_noise is not None:
             signal_noise = float(informed_behavior.signal_noise)
         else:
@@ -276,6 +313,9 @@ class SyntheticMarketSimulator:
             "signal_noise": signal_noise,
             "news_bias": news_bias,
             "threshold_bps": threshold_bps,
+            "sell_bias": sell_bias,
+            "negative_news_sell_bias": negative_news_sell_bias,
+            "inventory_pressure": inventory_pressure,
         }
 
     def _build_agent(self, agent_cfg: AgentConfig) -> ScriptedAgent:

@@ -251,6 +251,10 @@ class MarketMakerAgent(ScriptedAgent):
 class NoiseTraderAgent(ScriptedAgent):
     aggressiveness: float = 0.55
     market_order_probability: float = 0.7
+    sell_bias: float = 0.5
+    inventory_recycling_bias: float = 0.2
+    overpricing_sell_bias: float = 0.15
+    profit_taking_bias: float = 0.1
 
     def __init__(
         self,
@@ -258,10 +262,18 @@ class NoiseTraderAgent(ScriptedAgent):
         max_resting_orders: int = 2,
         aggressiveness: float = 0.55,
         market_order_probability: float = 0.7,
+        sell_bias: float = 0.5,
+        inventory_recycling_bias: float = 0.2,
+        overpricing_sell_bias: float = 0.15,
+        profit_taking_bias: float = 0.1,
     ) -> None:
         super().__init__(agent_id=agent_id, agent_type="noise_trader", max_resting_orders=max_resting_orders)
         self.aggressiveness = float(aggressiveness)
         self.market_order_probability = float(market_order_probability)
+        self.sell_bias = min(max(float(sell_bias), 0.05), 0.95)
+        self.inventory_recycling_bias = max(0.0, float(inventory_recycling_bias))
+        self.overpricing_sell_bias = max(0.0, float(overpricing_sell_bias))
+        self.profit_taking_bias = max(0.0, float(profit_taking_bias))
 
     def decide(self, observation: MarketObservation, rng) -> tuple[OrderIntent, ...]:
         if not observation.portfolio_active:
@@ -270,7 +282,8 @@ class NoiseTraderAgent(ScriptedAgent):
         if rng.random() > self.aggressiveness:
             return ()
 
-        side = Side.BUY if rng.random() < 0.5 else Side.SELL
+        sell_probability = self._sell_probability(observation)
+        side = Side.SELL if rng.random() < sell_probability else Side.BUY
         if side is Side.SELL and observation.agent_inventory < 1.0:
             return ()
 
@@ -297,11 +310,30 @@ class NoiseTraderAgent(ScriptedAgent):
             ),
         )
 
+    def _sell_probability(self, observation: MarketObservation) -> float:
+        sell_probability = self.sell_bias
+        if observation.agent_inventory > 0.0:
+            inventory_scale = min(observation.agent_inventory / 20.0, 2.0)
+            sell_probability += self.inventory_recycling_bias * inventory_scale
+            if observation.midpoint is not None and observation.midpoint > observation.latent_fundamental:
+                overpricing = max(observation.midpoint - observation.latent_fundamental, 0.0)
+                overpricing_scale = min(overpricing / max(observation.midpoint, 1.0), 0.03) / 0.03
+                sell_probability += self.overpricing_sell_bias * overpricing_scale
+            if observation.recent_returns_bps:
+                recent_signal = float(np.mean(observation.recent_returns_bps[-3:]))
+                if recent_signal > 0.0:
+                    profit_scale = min(recent_signal / 20.0, 1.0)
+                    sell_probability += self.profit_taking_bias * profit_scale
+        return min(max(sell_probability, 0.05), 0.95)
+
 
 @dataclass
 class TrendFollowerAgent(ScriptedAgent):
     threshold_bps: float = 1.5
     market_order_probability: float = 0.5
+    exit_threshold_bps: float = 0.6
+    overpricing_exit_bias: float = 0.9
+    inventory_pressure: float = 0.5
 
     def __init__(
         self,
@@ -309,30 +341,52 @@ class TrendFollowerAgent(ScriptedAgent):
         max_resting_orders: int = 2,
         threshold_bps: float = 1.5,
         market_order_probability: float = 0.5,
+        exit_threshold_bps: float = 0.6,
+        overpricing_exit_bias: float = 0.9,
+        inventory_pressure: float = 0.5,
     ) -> None:
         super().__init__(agent_id=agent_id, agent_type="trend_follower", max_resting_orders=max_resting_orders)
         self.threshold_bps = float(threshold_bps)
         self.market_order_probability = float(market_order_probability)
+        self.exit_threshold_bps = max(0.0, float(exit_threshold_bps))
+        self.overpricing_exit_bias = max(0.0, float(overpricing_exit_bias))
+        self.inventory_pressure = max(0.0, float(inventory_pressure))
 
     def decide(self, observation: MarketObservation, rng) -> tuple[OrderIntent, ...]:
         if not observation.portfolio_active or not observation.recent_returns_bps:
             return ()
 
         signal = float(np.mean(observation.recent_returns_bps[-3:]))
-        if abs(signal) < self.threshold_bps:
+        side: Side | None = None
+        effective_signal = signal
+        midpoint = _midpoint_or_fallback(observation)
+        if observation.agent_inventory > 0.0 and midpoint > observation.latent_fundamental:
+            overpricing = max(midpoint - observation.latent_fundamental, 0.0)
+            inventory_scale = min(observation.agent_inventory / 20.0, 2.0)
+            effective_signal -= self.overpricing_exit_bias * inventory_scale * (overpricing / max(midpoint, 1.0)) * 10_000.0
+        if observation.agent_inventory > 0.0 and effective_signal <= -self.exit_threshold_bps:
+            side = Side.SELL
+        elif signal >= self.threshold_bps:
+            side = Side.BUY
+        elif signal <= -self.threshold_bps:
+            side = Side.SELL
+        else:
             return ()
 
-        side = Side.BUY if signal > 0 else Side.SELL
         if side is Side.SELL and observation.agent_inventory < 1.0:
             return ()
 
-        quantity = 1 if abs(signal) < 3.0 else 2
+        quantity_signal = abs(effective_signal if side is Side.SELL else signal)
+        quantity = 1 if quantity_signal < 3.0 else 2
+        if side is Side.SELL and observation.agent_inventory > 0.0:
+            inventory_scale = min(observation.agent_inventory / 20.0, 2.0)
+            quantity += int(round(inventory_scale * self.inventory_pressure))
+            quantity = min(quantity, int(max(1.0, np.floor(observation.agent_inventory))))
         if rng.random() < self.market_order_probability:
             order_type = OrderType.MARKET
             limit_price = None
         else:
             tick = observation.tick_size
-            midpoint = _midpoint_or_fallback(observation)
             if side is Side.BUY:
                 limit_price = _clamp_price((observation.best_ask or midpoint) + tick, tick)
             else:
@@ -345,7 +399,7 @@ class TrendFollowerAgent(ScriptedAgent):
                 order_type=order_type,
                 quantity=quantity,
                 limit_price=limit_price,
-                annotation="trend_follow",
+                annotation="trend_exit" if side is Side.SELL else "trend_follow",
             ),
         )
 
@@ -355,6 +409,9 @@ class InformedTraderAgent(ScriptedAgent):
     signal_noise: float = 0.15
     news_bias: float = 1.25
     threshold_bps: float = 1.0
+    sell_bias: float = 1.35
+    negative_news_sell_bias: float = 0.9
+    inventory_pressure: float = 0.6
 
     def __init__(
         self,
@@ -363,11 +420,17 @@ class InformedTraderAgent(ScriptedAgent):
         signal_noise: float = 0.15,
         news_bias: float = 1.25,
         threshold_bps: float = 1.0,
+        sell_bias: float = 1.35,
+        negative_news_sell_bias: float = 0.9,
+        inventory_pressure: float = 0.6,
     ) -> None:
         super().__init__(agent_id=agent_id, agent_type="informed_trader", max_resting_orders=max_resting_orders)
         self.signal_noise = float(signal_noise)
         self.news_bias = float(news_bias)
         self.threshold_bps = float(threshold_bps)
+        self.sell_bias = max(1.0, float(sell_bias))
+        self.negative_news_sell_bias = max(0.0, float(negative_news_sell_bias))
+        self.inventory_pressure = max(0.0, float(inventory_pressure))
 
     def decide(self, observation: MarketObservation, rng) -> tuple[OrderIntent, ...]:
         if not observation.portfolio_active:
@@ -375,8 +438,17 @@ class InformedTraderAgent(ScriptedAgent):
 
         midpoint = observation.midpoint if observation.midpoint is not None else observation.latent_fundamental
         raw_edge = float(observation.latent_fundamental - midpoint)
-        if observation.news_severity is not None:
-            raw_edge += self.news_bias * float(observation.news_severity)
+        news_severity = None if observation.news_severity is None else float(observation.news_severity)
+        if news_severity is not None:
+            raw_edge += self.news_bias * news_severity
+        if news_severity is not None and news_severity < 0.0 and observation.agent_inventory > 0.0:
+            raw_edge += self.negative_news_sell_bias * news_severity
+        if observation.agent_inventory > 0.0 and midpoint > observation.latent_fundamental:
+            overpricing = float(midpoint - observation.latent_fundamental)
+            inventory_scale = min(max(observation.agent_inventory, 0.0) / 20.0, 2.0)
+            raw_edge -= self.inventory_pressure * overpricing * inventory_scale
+        if raw_edge < 0.0:
+            raw_edge *= self.sell_bias
         raw_edge += float(rng.normal(0.0, self.signal_noise))
         edge_bps = raw_edge / max(midpoint, 1e-6) * 10_000.0
 

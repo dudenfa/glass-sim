@@ -28,6 +28,7 @@ const CHART_LAYOUT = Object.freeze({
 const els = {
   connectionStatus: document.getElementById("connectionStatus"),
   modeStatus: document.getElementById("modeStatus"),
+  seedStatus: document.getElementById("seedStatus"),
   marketTitle: document.getElementById("marketTitle"),
   marketTimestamp: document.getElementById("marketTimestamp"),
   marketPrice: document.getElementById("marketPrice"),
@@ -210,6 +211,7 @@ function snapshotRenderKey(snapshot) {
   const activeAgents = Number(firstDefined(session, ["active_agent_count"], stats.activeAgents ?? 0));
   return [
     snapshot?.source || state.source,
+    snapshot?.seed ?? "na",
     session.reset_count ?? 0,
     session.step_index ?? snapshot?.timestamp ?? 0,
     session.status || "",
@@ -839,6 +841,7 @@ function normalizeBackendState(raw) {
   return {
     source: "backend",
     marketName: String(firstDefined(raw, ["market_name"], firstDefined(market, ["symbol", "name"], "Synthetic market"))),
+    seed: Number(firstDefined(session, ["seed"], CONFIG.seed)),
     timestamp: Number(firstDefined(session, ["current_step_index", "step_index"], firstDefined(market, ["timestamp_ns", "timestamp"], 0))),
     midpoint,
     fundamental: Number(firstDefined(market, ["fundamental"], lineSeries.at(-1)?.fundamental ?? midpoint)),
@@ -1125,6 +1128,7 @@ function createDemoWorld(seed = 17) {
       return {
         source: "demo",
         marketName: "Synthetic spot market",
+        seed,
         timestamp: frame.time,
         midpoint: frame.close,
         fundamental: frame.fundamental,
@@ -1421,6 +1425,7 @@ function renderMarketMeta(snapshot) {
   renderChartPrice(snapshot);
   els.marketTitle.textContent = snapshot.marketName || "Synthetic market";
   els.marketTimestamp.textContent = fmtTime(snapshot.timestamp);
+  els.seedStatus.textContent = `Seed ${Number.isFinite(snapshot.seed) ? snapshot.seed : CONFIG.seed}`;
 
   const stats = [
     { label: "Agents", value: snapshot.stats?.activeAgents ?? snapshot.portfolios?.filter((portfolio) => portfolio.active).length ?? 0 },
