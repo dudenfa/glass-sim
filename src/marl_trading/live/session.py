@@ -27,9 +27,12 @@ class _PnLTracker:
 
 @dataclass(frozen=True)
 class _RuntimeRLConfig:
-    checkpoint_path: Path
-    learning_agent_id: str
+    checkpoint_path: Path | None
+    learning_agent_id: str | None
     learning_agent_starting_inventory: float
+    frozen_agent_checkpoint_path: Path | None = None
+    frozen_agent_id: str | None = None
+    frozen_agent_starting_inventory: float | None = None
 
 
 class LiveMarketSession:
@@ -45,6 +48,9 @@ class LiveMarketSession:
         checkpoint_path: str | Path | None = None,
         learning_agent_id: str | None = None,
         learning_agent_starting_inventory: float = 0.0,
+        frozen_agent_checkpoint_path: str | Path | None = None,
+        frozen_agent_id: str | None = None,
+        frozen_agent_starting_inventory: float | None = None,
     ) -> None:
         self.base_config = config or default_simulation_config()
         self.horizon = int(horizon if horizon is not None else self.base_config.market.event_horizon)
@@ -56,8 +62,20 @@ class LiveMarketSession:
             checkpoint_path=checkpoint_path,
             learning_agent_id=learning_agent_id,
             learning_agent_starting_inventory=learning_agent_starting_inventory,
+            frozen_agent_checkpoint_path=frozen_agent_checkpoint_path,
+            frozen_agent_id=frozen_agent_id,
+            frozen_agent_starting_inventory=frozen_agent_starting_inventory,
         )
-        self._ppo_model = None if self._runtime_rl is None else self._load_ppo_policy(self._runtime_rl.checkpoint_path)
+        self._ppo_model = (
+            None
+            if self._runtime_rl is None or self._runtime_rl.checkpoint_path is None
+            else self._load_ppo_policy(self._runtime_rl.checkpoint_path)
+        )
+        self._frozen_ppo_model = (
+            None
+            if self._runtime_rl is None or self._runtime_rl.frozen_agent_checkpoint_path is None
+            else self._load_ppo_policy(self._runtime_rl.frozen_agent_checkpoint_path)
+        )
 
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -108,16 +126,27 @@ class LiveMarketSession:
         checkpoint_path: str | Path | None,
         learning_agent_id: str | None,
         learning_agent_starting_inventory: float,
+        frozen_agent_checkpoint_path: str | Path | None,
+        frozen_agent_id: str | None,
+        frozen_agent_starting_inventory: float | None,
     ) -> _RuntimeRLConfig | None:
-        if checkpoint_path is None:
+        if checkpoint_path is None and frozen_agent_checkpoint_path is None:
             return None
         agent_id = str(learning_agent_id or "").strip()
-        if not agent_id:
+        resolved_frozen_id = str(frozen_agent_id or "").strip() or None
+        if checkpoint_path is not None and not agent_id:
             raise ValueError("A learning_agent_id is required when checkpoint_path is provided.")
+        if frozen_agent_checkpoint_path is not None and not resolved_frozen_id:
+            raise ValueError("A frozen_agent_id is required when frozen_agent_checkpoint_path is provided.")
+        if agent_id and resolved_frozen_id and agent_id == resolved_frozen_id:
+            raise ValueError("learning_agent_id and frozen_agent_id must be different when both runtime PPO agents are enabled.")
         return _RuntimeRLConfig(
-            checkpoint_path=Path(checkpoint_path).expanduser().resolve(),
-            learning_agent_id=agent_id,
+            checkpoint_path=None if checkpoint_path is None else Path(checkpoint_path).expanduser().resolve(),
+            learning_agent_id=agent_id or None,
             learning_agent_starting_inventory=float(learning_agent_starting_inventory),
+            frozen_agent_checkpoint_path=None if frozen_agent_checkpoint_path is None else Path(frozen_agent_checkpoint_path).expanduser().resolve(),
+            frozen_agent_id=resolved_frozen_id,
+            frozen_agent_starting_inventory=None if frozen_agent_starting_inventory is None else float(frozen_agent_starting_inventory),
         )
 
     def _load_ppo_policy(self, checkpoint_path: Path):
@@ -135,23 +164,43 @@ class LiveMarketSession:
     def _attach_runtime_rl_agent(self, simulator: SyntheticMarketSimulator) -> None:
         if self._runtime_rl is None:
             return
-        agent_id = self._runtime_rl.learning_agent_id
-        if agent_id not in simulator.agents:
-            raise KeyError(f"Unknown runtime learning agent id: {agent_id}")
-        original = simulator.agents[agent_id]
-        simulator.agents[agent_id] = RuntimePolicyControlledAgent(
-            agent_id=agent_id,
-            policy=self._ppo_model,
-            fallback_agent=original if isinstance(original, ScriptedAgent) else None,
-            agent_type="rl_agent",
-            max_resting_orders=getattr(original, "max_resting_orders", 1),
-            delegate_bootstrap=False,
-        )
-        portfolio = simulator.portfolios.get(agent_id)
-        overridden_inventory = float(self._runtime_rl.learning_agent_starting_inventory)
-        portfolio.starting_inventory = overridden_inventory
-        portfolio.inventory = overridden_inventory
-        portfolio.reserved_inventory = 0.0
+        if self._runtime_rl.frozen_agent_id is not None:
+            frozen_agent_id = self._runtime_rl.frozen_agent_id
+            if frozen_agent_id not in simulator.agents:
+                raise KeyError(f"Unknown runtime frozen agent id: {frozen_agent_id}")
+            original_frozen = simulator.agents[frozen_agent_id]
+            simulator.agents[frozen_agent_id] = RuntimePolicyControlledAgent(
+                agent_id=frozen_agent_id,
+                policy=self._frozen_ppo_model,
+                fallback_agent=original_frozen if isinstance(original_frozen, ScriptedAgent) else None,
+                agent_type="rl_agent",
+                max_resting_orders=getattr(original_frozen, "max_resting_orders", 1),
+                delegate_bootstrap=False,
+            )
+            if self._runtime_rl.frozen_agent_starting_inventory is not None:
+                portfolio = simulator.portfolios.get(frozen_agent_id)
+                overridden_inventory = float(self._runtime_rl.frozen_agent_starting_inventory)
+                portfolio.starting_inventory = overridden_inventory
+                portfolio.inventory = overridden_inventory
+                portfolio.reserved_inventory = 0.0
+        if self._runtime_rl.learning_agent_id:
+            agent_id = self._runtime_rl.learning_agent_id
+            if agent_id not in simulator.agents:
+                raise KeyError(f"Unknown runtime learning agent id: {agent_id}")
+            original = simulator.agents[agent_id]
+            simulator.agents[agent_id] = RuntimePolicyControlledAgent(
+                agent_id=agent_id,
+                policy=self._ppo_model,
+                fallback_agent=original if isinstance(original, ScriptedAgent) else None,
+                agent_type="rl_agent",
+                max_resting_orders=getattr(original, "max_resting_orders", 1),
+                delegate_bootstrap=False,
+            )
+            portfolio = simulator.portfolios.get(agent_id)
+            overridden_inventory = float(self._runtime_rl.learning_agent_starting_inventory)
+            portfolio.starting_inventory = overridden_inventory
+            portfolio.inventory = overridden_inventory
+            portfolio.reserved_inventory = 0.0
 
     def _analysis_snapshot(self, depth: int, timestamp_ns: int) -> OrderBookSnapshot:
         exchange_snapshot = self.simulator.exchange.snapshot(depth=depth, timestamp=timestamp_ns)
@@ -573,8 +622,11 @@ class LiveMarketSession:
                 "runtime_policy": {
                     "enabled": self._runtime_rl is not None,
                     "learning_agent_id": None if self._runtime_rl is None else self._runtime_rl.learning_agent_id,
-                    "checkpoint_path": None if self._runtime_rl is None else str(self._runtime_rl.checkpoint_path),
+                    "checkpoint_path": None if self._runtime_rl is None or self._runtime_rl.checkpoint_path is None else str(self._runtime_rl.checkpoint_path),
                     "learning_agent_starting_inventory": None if self._runtime_rl is None else float(self._runtime_rl.learning_agent_starting_inventory),
+                    "frozen_agent_id": None if self._runtime_rl is None else self._runtime_rl.frozen_agent_id,
+                    "frozen_agent_checkpoint_path": None if self._runtime_rl is None or self._runtime_rl.frozen_agent_checkpoint_path is None else str(self._runtime_rl.frozen_agent_checkpoint_path),
+                    "frozen_agent_starting_inventory": None if self._runtime_rl is None else self._runtime_rl.frozen_agent_starting_inventory,
                 },
             },
             "market": market,

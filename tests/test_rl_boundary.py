@@ -24,6 +24,8 @@ from marl_trading.rl import (
     mask_invalid_action,
     observation_to_feature_dict,
 )
+from marl_trading.rl.live import RuntimePolicyDecision, decode_policy_action
+from marl_trading.rl.scenario import prepare_frozen_agent_config, prepare_learning_agent_config
 
 
 def _observation(**overrides):
@@ -43,6 +45,8 @@ def _observation(**overrides):
         agent_cash=10_000.0,
         agent_inventory=4.0,
         agent_equity=10_400.0,
+        available_cash=10_000.0,
+        available_inventory=4.0,
         open_orders=2,
         active_agents=4,
         portfolio_active=True,
@@ -50,6 +54,10 @@ def _observation(**overrides):
         public_note="step=12",
     )
     base.update(overrides)
+    if "available_cash" not in overrides:
+        base["available_cash"] = float(base["agent_cash"])
+    if "available_inventory" not in overrides:
+        base["available_inventory"] = float(base["agent_inventory"])
     return MarketObservation(**base)
 
 
@@ -222,6 +230,26 @@ def test_mask_invalid_action_blocks_sell_without_inventory() -> None:
     assert reason == "insufficient_inventory_for_sell"
 
 
+def test_mask_invalid_action_blocks_sell_when_inventory_is_fully_reserved() -> None:
+    effective, reason = mask_invalid_action(
+        RLAction(RLActionType.LIMIT_SELL, quantity=1, price_offset_ticks=1),
+        _observation(agent_inventory=1.0, available_inventory=0.0, open_orders=1),
+    )
+
+    assert effective.action_type is RLActionType.HOLD
+    assert reason == "insufficient_inventory_for_sell"
+
+
+def test_mask_invalid_action_blocks_buy_when_cash_is_fully_reserved() -> None:
+    effective, reason = mask_invalid_action(
+        RLAction(RLActionType.LIMIT_BUY, quantity=1, price_offset_ticks=1),
+        _observation(agent_cash=100.0, available_cash=0.0, open_orders=1),
+    )
+
+    assert effective.action_type is RLActionType.HOLD
+    assert reason == "insufficient_cash_for_buy"
+
+
 def test_mask_invalid_action_blocks_market_buy_without_ask_liquidity() -> None:
     effective, reason = mask_invalid_action(
         RLAction(RLActionType.MARKET_BUY, quantity=1, price_offset_ticks=1),
@@ -253,7 +281,17 @@ def test_mask_invalid_action_blocks_cancel_without_open_orders() -> None:
 
 
 def test_phase_a_action_mask_blocks_invalid_sell_actions_with_zero_inventory() -> None:
-    config = default_simulation_config()
+    config = prepare_frozen_agent_config(
+        prepare_learning_agent_config(
+            default_simulation_config(),
+            learning_agent_id="rl_02",
+            add_learning_agent=True,
+            learning_agent_template_id="trend_01",
+        ),
+        frozen_agent_id="rl_01",
+        add_frozen_agent=True,
+        frozen_agent_template_id="trend_01",
+    )
     core_env = SingleAgentMarketEnv(
         config=replace(config),
         env_config=SingleAgentEnvConfig(
@@ -385,7 +423,17 @@ def test_try_load_ppo_policy_reports_missing_dependency(monkeypatch: pytest.Monk
 
 
 def test_single_agent_env_is_deterministic_for_fixed_seed_and_actions() -> None:
-    config = default_simulation_config()
+    config = prepare_frozen_agent_config(
+        prepare_learning_agent_config(
+            default_simulation_config(),
+            learning_agent_id="rl_02",
+            add_learning_agent=True,
+            learning_agent_template_id="trend_01",
+        ),
+        frozen_agent_id="rl_01",
+        add_frozen_agent=True,
+        frozen_agent_template_id="trend_01",
+    )
     env_config = SingleAgentEnvConfig(learning_agent_id="maker_01", reward_inventory_penalty=0.1)
     env_a = SingleAgentMarketEnv(config=replace(config), env_config=env_config, horizon=48)
     env_b = SingleAgentMarketEnv(config=replace(config), env_config=env_config, horizon=48)
@@ -408,7 +456,17 @@ def test_single_agent_env_is_deterministic_for_fixed_seed_and_actions() -> None:
 
 
 def test_single_agent_env_supports_realized_pnl_reward_with_inactivity_penalty() -> None:
-    config = default_simulation_config()
+    config = prepare_frozen_agent_config(
+        prepare_learning_agent_config(
+            default_simulation_config(),
+            learning_agent_id="rl_02",
+            add_learning_agent=True,
+            learning_agent_template_id="trend_01",
+        ),
+        frozen_agent_id="rl_01",
+        add_frozen_agent=True,
+        frozen_agent_template_id="trend_01",
+    )
     env = SingleAgentMarketEnv(
         config=replace(config),
         env_config=SingleAgentEnvConfig(
@@ -511,7 +569,17 @@ def test_single_agent_env_masks_invalid_sell_before_execution() -> None:
 
 
 def test_single_agent_env_can_build_market_run_result_after_episode() -> None:
-    config = default_simulation_config()
+    config = prepare_frozen_agent_config(
+        prepare_learning_agent_config(
+            default_simulation_config(),
+            learning_agent_id="rl_02",
+            add_learning_agent=True,
+            learning_agent_template_id="trend_01",
+        ),
+        frozen_agent_id="rl_01",
+        add_frozen_agent=True,
+        frozen_agent_template_id="trend_01",
+    )
     env = SingleAgentMarketEnv(
         config=replace(config),
         env_config=SingleAgentEnvConfig(learning_agent_id="trend_01"),
@@ -530,7 +598,17 @@ def test_single_agent_env_can_build_market_run_result_after_episode() -> None:
 
 
 def test_learning_slot_can_override_starting_inventory() -> None:
-    config = default_simulation_config()
+    config = prepare_frozen_agent_config(
+        prepare_learning_agent_config(
+            default_simulation_config(),
+            learning_agent_id="rl_02",
+            add_learning_agent=True,
+            learning_agent_template_id="trend_01",
+        ),
+        frozen_agent_id="rl_01",
+        add_frozen_agent=True,
+        frozen_agent_template_id="trend_01",
+    )
     env = SingleAgentMarketEnv(
         config=replace(config),
         env_config=SingleAgentEnvConfig(
@@ -547,6 +625,53 @@ def test_learning_slot_can_override_starting_inventory() -> None:
     assert portfolio.starting_inventory == pytest.approx(0.0)
     assert portfolio.inventory == pytest.approx(0.0)
     assert observation.agent_inventory == pytest.approx(0.0)
+
+
+def test_frozen_runtime_agent_can_be_attached_with_inventory_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeFrozenPolicy:
+        def action_for(self, observation):  # noqa: ARG002
+            raw_action = (0, 0, 0)
+            return RuntimePolicyDecision(
+                features=tuple(),
+                raw_action=raw_action,
+                rl_action=decode_policy_action(raw_action),
+            )
+
+    monkeypatch.setattr(
+        "marl_trading.rl.env.PPOPolicyAdapter.try_load",
+        lambda checkpoint_path, device="cpu", deterministic=True: (_FakeFrozenPolicy(), SimpleNamespace(available=True, checkpoint_path=checkpoint_path, reason=None)),
+    )
+
+    config = prepare_frozen_agent_config(
+        prepare_learning_agent_config(
+            default_simulation_config(),
+            learning_agent_id="rl_02",
+            add_learning_agent=True,
+            learning_agent_template_id="trend_01",
+        ),
+        frozen_agent_id="rl_01",
+        add_frozen_agent=True,
+        frozen_agent_template_id="trend_01",
+    )
+    env = SingleAgentMarketEnv(
+        config=replace(config),
+        env_config=SingleAgentEnvConfig(
+            learning_agent_id="rl_02",
+            learning_agent_starting_inventory=0.0,
+            frozen_agent_id="rl_01",
+            frozen_agent_checkpoint_path="/tmp/frozen_rl_01.zip",
+            frozen_agent_starting_inventory=0.0,
+        ),
+        horizon=24,
+    )
+
+    env.reset(seed=7, horizon=24)
+    frozen_portfolio = env.simulator.portfolios.get("rl_01")
+    learning_portfolio = env.simulator.portfolios.get("rl_02")
+
+    assert env.simulator.agents["rl_01"].agent_type == "rl_agent"
+    assert frozen_portfolio.starting_inventory == pytest.approx(0.0)
+    assert learning_portfolio.starting_inventory == pytest.approx(0.0)
 
 
 def test_gym_wrapper_exposes_spaces_and_reset_semantics() -> None:

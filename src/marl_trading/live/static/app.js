@@ -133,6 +133,7 @@ function fmtCompactOrderDetail(action) {
   const quantity = Number(action.quantity);
   const price = Number(action.price);
   const orderType = fmtLatestOrderType(action);
+  const note = String(firstDefined(action, ["note"], "")).trim();
   const orderId = String(firstDefined(action, ["orderId", "order_id", "canceled_order_id", "target_order_id"], "")).trim();
   const originalSide = String(firstDefined(action, ["originalSide", "original_side"], side)).trim().toLowerCase();
   const originalQuantity = Number(firstDefined(action, ["originalQuantity", "original_quantity"], quantity));
@@ -142,9 +143,11 @@ function fmtCompactOrderDetail(action) {
 
   if (orderType === "CANCEL") {
     if (originalSide && Number.isFinite(originalQuantity) && originalQuantity > 0 && Number.isFinite(originalPrice)) {
-      return `${originalSide.toUpperCase()} ${fmtQty(originalQuantity)} @ ${fmtNumber(originalPrice, 2)}`;
+      const base = `${originalSide.toUpperCase()} ${fmtQty(originalQuantity)} @ ${fmtNumber(originalPrice, 2)}`;
+      return note ? `${base} (${note})` : base;
     }
-    return orderId ? `cancel ${compactOrderId(orderId)}` : "cancel";
+    const base = orderId ? `cancel ${compactOrderId(orderId)}` : "cancel";
+    return note ? `${base} (${note})` : base;
   }
 
   if (!sideLabel && qtyText === "--" && priceText === "--" && orderId) {

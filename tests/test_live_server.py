@@ -55,6 +55,11 @@ def test_live_server_cli_parses_runtime_rl_flags(monkeypatch) -> None:
     assert args.add_learning_agent is False
     assert args.learning_agent_template_id is None
     assert args.learning_agent_starting_inventory == 0.0
+    assert args.frozen_agent_checkpoint is None
+    assert args.frozen_agent_id is None
+    assert args.add_frozen_agent is False
+    assert args.frozen_agent_template_id is None
+    assert args.frozen_agent_starting_inventory is None
 
 
 def test_live_server_cli_parses_add_learning_agent_flags(monkeypatch) -> None:
@@ -76,6 +81,31 @@ def test_live_server_cli_parses_add_learning_agent_flags(monkeypatch) -> None:
     assert args.learning_agent_id == "rl_01"
     assert args.add_learning_agent is True
     assert args.learning_agent_template_id == "trend_01"
+
+
+def test_live_server_cli_parses_frozen_agent_flags(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "serve_market_view.py",
+            "--frozen-agent-checkpoint",
+            "checkpoints/ppo_baseline_rl_01_v1.zip",
+            "--frozen-agent-id",
+            "rl_01",
+            "--add-frozen-agent",
+            "--frozen-agent-template-id",
+            "trend_01",
+            "--frozen-agent-starting-inventory",
+            "0",
+        ],
+    )
+    args = parse_args()
+    assert args.frozen_agent_checkpoint == Path("checkpoints/ppo_baseline_rl_01_v1.zip")
+    assert args.frozen_agent_id == "rl_01"
+    assert args.add_frozen_agent is True
+    assert args.frozen_agent_template_id == "trend_01"
+    assert args.frozen_agent_starting_inventory == 0.0
 
 
 def test_live_server_endpoints() -> None:

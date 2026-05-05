@@ -123,15 +123,45 @@ def action_to_order_intent(action: RLAction, observation: MarketObservation) -> 
     raise ValueError(f"Unsupported RL action type: {action.action_type}")
 
 
+def _available_cash(observation: MarketObservation) -> float:
+    fallback = max(float(observation.agent_cash), 0.0)
+    if observation.available_cash is None:
+        return fallback
+    return max(float(observation.available_cash), 0.0)
+
+
+def _available_inventory(observation: MarketObservation) -> float:
+    fallback = max(float(observation.agent_inventory), 0.0)
+    if observation.available_inventory is None:
+        return fallback
+    return max(float(observation.available_inventory), 0.0)
+
+
+def _estimated_buy_reservation_price(action: RLAction, observation: MarketObservation) -> float:
+    midpoint = _midpoint_or_fallback(observation)
+    if action.action_type is RLActionType.MARKET_BUY:
+        return float(observation.best_ask if observation.best_ask is not None else midpoint)
+    if action.action_type is RLActionType.LIMIT_BUY:
+        tick = float(observation.tick_size)
+        anchor = observation.best_bid if observation.best_bid is not None else midpoint
+        return float(_clamp_price(anchor - max(int(action.price_offset_ticks), 1) * tick, tick))
+    return float(midpoint)
+
+
 def mask_invalid_action(action: RLAction, observation: MarketObservation) -> tuple[RLAction, str | None]:
     quantity = max(int(action.quantity), 1)
-    available_inventory = max(float(observation.agent_inventory), 0.0)
+    available_cash = _available_cash(observation)
+    available_inventory = _available_inventory(observation)
     open_orders = max(int(observation.open_orders), 0)
 
     if action.action_type is RLActionType.MARKET_BUY and observation.best_ask is None:
         return RLAction(RLActionType.HOLD), "no_ask_liquidity_for_market_buy"
     if action.action_type is RLActionType.MARKET_SELL and observation.best_bid is None:
         return RLAction(RLActionType.HOLD), "no_bid_liquidity_for_market_sell"
+    if action.action_type in {RLActionType.MARKET_BUY, RLActionType.LIMIT_BUY}:
+        required_cash = quantity * _estimated_buy_reservation_price(action, observation)
+        if available_cash + 1e-9 < required_cash:
+            return RLAction(RLActionType.HOLD), "insufficient_cash_for_buy"
     if action.action_type in {RLActionType.MARKET_SELL, RLActionType.LIMIT_SELL} and available_inventory + 1e-9 < quantity:
         return RLAction(RLActionType.HOLD), "insufficient_inventory_for_sell"
     if action.action_type is RLActionType.CANCEL_OLDEST and open_orders <= 0:

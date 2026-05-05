@@ -16,6 +16,11 @@ def test_parse_args_defaults_to_trend_slot() -> None:
     assert args.add_learning_agent is False
     assert args.learning_agent_template_id is None
     assert args.learning_agent_starting_inventory == 0.0
+    assert args.frozen_agent_checkpoint is None
+    assert args.frozen_agent_id is None
+    assert args.add_frozen_agent is False
+    assert args.frozen_agent_template_id is None
+    assert args.frozen_agent_starting_inventory is None
     assert args.train_seeds is None
     assert args.phase_a_action_space is True
     assert args.include_cancel_action is False
@@ -110,6 +115,30 @@ def test_parse_args_accepts_add_learning_agent_mode() -> None:
     assert args.learning_agent_template_id == "trend_01"
 
 
+def test_parse_args_accepts_frozen_agent_mode() -> None:
+    args = train_rl_agent.parse_args(
+        [
+            "--total-timesteps",
+            "128",
+            "--frozen-agent-checkpoint",
+            "checkpoints/ppo_baseline_rl_01_v1.zip",
+            "--frozen-agent-id",
+            "rl_01",
+            "--add-frozen-agent",
+            "--frozen-agent-template-id",
+            "trend_01",
+            "--frozen-agent-starting-inventory",
+            "0",
+        ]
+    )
+
+    assert args.frozen_agent_checkpoint == Path("checkpoints/ppo_baseline_rl_01_v1.zip")
+    assert args.frozen_agent_id == "rl_01"
+    assert args.add_frozen_agent is True
+    assert args.frozen_agent_template_id == "trend_01"
+    assert args.frozen_agent_starting_inventory == 0.0
+
+
 def test_default_output_model_uses_preset_and_agent() -> None:
     checkpoint = train_rl_agent.default_checkpoint_path("baseline", "trend_01")
 
@@ -180,7 +209,13 @@ def test_build_training_metadata_includes_inventory_risk_penalty(tmp_path: Path)
     assert metadata["train_seeds"] == []
     assert metadata["add_learning_agent"] is False
     assert metadata["learning_agent_template_id"] is None
+    assert metadata["frozen_agent_checkpoint"] is None
+    assert metadata["frozen_agent_id"] is None
+    assert metadata["add_frozen_agent"] is False
+    assert metadata["frozen_agent_template_id"] is None
+    assert metadata["frozen_agent_starting_inventory"] is None
     assert metadata["runtime_learning_agent_mode"] == "replace"
+    assert metadata["runtime_frozen_agent_mode"] is None
 
 
 def test_build_training_metadata_includes_multi_seed_schedule(tmp_path: Path) -> None:
@@ -216,3 +251,19 @@ def test_build_training_config_can_add_learning_agent() -> None:
     assert agent_ids == ["maker_01", "retail_01", "informed_01", "trend_01", "rl_01"]
     cloned = next(agent for agent in config.agents if agent.agent_id.value == "rl_01")
     assert cloned.agent_type == "trend_follower"
+
+
+def test_build_training_config_can_add_learning_and_frozen_agents() -> None:
+    config, horizon = train_rl_agent.build_training_config(
+        "baseline",
+        learning_agent_id="rl_02",
+        add_learning_agent=True,
+        learning_agent_template_id="trend_01",
+        frozen_agent_id="rl_01",
+        add_frozen_agent=True,
+        frozen_agent_template_id="trend_01",
+    )
+
+    assert horizon == config.market.event_horizon
+    agent_ids = [agent.agent_id.value for agent in config.agents]
+    assert agent_ids == ["maker_01", "retail_01", "informed_01", "trend_01", "rl_01", "rl_02"]

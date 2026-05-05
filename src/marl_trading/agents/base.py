@@ -27,6 +27,8 @@ class MarketObservation:
     active_agents: int
     portfolio_active: bool
     agent_type: str
+    available_cash: float | None = None
+    available_inventory: float | None = None
     public_note: str = ""
 
 

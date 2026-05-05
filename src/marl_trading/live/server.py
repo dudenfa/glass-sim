@@ -34,6 +34,9 @@ class LiveServerConfig:
     checkpoint_path: Path | None = None
     learning_agent_id: str | None = None
     learning_agent_starting_inventory: float = 0.0
+    frozen_agent_checkpoint_path: Path | None = None
+    frozen_agent_id: str | None = None
+    frozen_agent_starting_inventory: float | None = None
     history_limit: int = 5000
 
 
@@ -144,6 +147,9 @@ class MarketViewServer:
             checkpoint_path=config.checkpoint_path,
             learning_agent_id=config.learning_agent_id,
             learning_agent_starting_inventory=config.learning_agent_starting_inventory,
+            frozen_agent_checkpoint_path=config.frozen_agent_checkpoint_path,
+            frozen_agent_id=config.frozen_agent_id,
+            frozen_agent_starting_inventory=config.frozen_agent_starting_inventory,
         )
         self.httpd = _ReusableThreadingHTTPServer((config.host, config.port), _MarketViewHandler)
         self.httpd.market_server = self  # type: ignore[attr-defined]
@@ -216,5 +222,32 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Starting inventory for the runtime-replaced PPO slot only.",
+    )
+    parser.add_argument(
+        "--frozen-agent-checkpoint",
+        type=Path,
+        default=None,
+        help="Optional PPO checkpoint to use for a frozen runtime opponent.",
+    )
+    parser.add_argument(
+        "--frozen-agent-id",
+        default=None,
+        help="Agent id replaced or added at runtime by the frozen PPO policy when --frozen-agent-checkpoint is provided.",
+    )
+    parser.add_argument(
+        "--add-frozen-agent",
+        action="store_true",
+        help="Add the frozen PPO agent as a new participant instead of replacing an existing scripted slot.",
+    )
+    parser.add_argument(
+        "--frozen-agent-template-id",
+        default=None,
+        help="Existing scripted agent id to clone when --add-frozen-agent is enabled.",
+    )
+    parser.add_argument(
+        "--frozen-agent-starting-inventory",
+        type=float,
+        default=None,
+        help="Optional starting inventory override for the frozen PPO slot.",
     )
     return parser.parse_args()

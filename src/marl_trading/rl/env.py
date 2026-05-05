@@ -19,6 +19,7 @@ from marl_trading.core.config import SimulationConfig
 from marl_trading.market.processes import NewsEvent
 from marl_trading.market.simulator import MarketRunResult, SyntheticMarketSimulator
 
+from .live import PPOPolicyAdapter, RuntimePolicyControlledAgent
 from .boundary import (
     PHASE_A_ACTION_TYPE_ORDER,
     RLAction,
@@ -77,6 +78,9 @@ _DiscreteSpace = spaces.Discrete if spaces is not None else _FallbackDiscrete
 class SingleAgentEnvConfig:
     learning_agent_id: str
     learning_agent_starting_inventory: float = 0.0
+    frozen_agent_id: str | None = None
+    frozen_agent_checkpoint_path: str | None = None
+    frozen_agent_starting_inventory: float | None = None
     train_seeds: tuple[int, ...] = ()
     phase_a_action_space: bool = True
     include_cancel_action: bool = False
@@ -128,6 +132,7 @@ class SingleAgentMarketEnv:
         self.env_config = env_config or SingleAgentEnvConfig(learning_agent_id=self._default_learning_agent_id())
         self.horizon = int(horizon if horizon is not None else self.config.market.event_horizon)
         self._proxy = _LearningAgentProxy(self.env_config.learning_agent_id)
+        self._frozen_policy = self._load_frozen_policy()
         self.simulator: SyntheticMarketSimulator | None = None
         self._done = False
         self._current_observation: MarketObservation | None = None
@@ -153,10 +158,23 @@ class SingleAgentMarketEnv:
         if seed is not None:
             updated = replace(updated, seed=int(seed))
         simulator = SyntheticMarketSimulator(updated, horizon=horizon if horizon is not None else self.horizon)
-        self._attach_proxy(simulator)
+        self._attach_runtime_agents(simulator)
         return simulator
 
-    def _attach_proxy(self, simulator: SyntheticMarketSimulator) -> None:
+    def _load_frozen_policy(self) -> PPOPolicyAdapter | None:
+        checkpoint_path = str(self.env_config.frozen_agent_checkpoint_path or "").strip()
+        if not checkpoint_path:
+            return None
+        adapter, status = PPOPolicyAdapter.try_load(checkpoint_path, device="cpu", deterministic=True)
+        if adapter is None:
+            raise RuntimeError(status.reason or f"Unable to load frozen PPO checkpoint: {status.checkpoint_path}")
+        return adapter
+
+    def _attach_runtime_agents(self, simulator: SyntheticMarketSimulator) -> None:
+        self._attach_frozen_agent(simulator)
+        self._attach_learning_proxy(simulator)
+
+    def _attach_learning_proxy(self, simulator: SyntheticMarketSimulator) -> None:
         if self.env_config.learning_agent_id not in simulator.agents:
             raise KeyError(f"Unknown learning agent id: {self.env_config.learning_agent_id}")
         original = simulator.agents[self.env_config.learning_agent_id]
@@ -170,6 +188,32 @@ class SingleAgentMarketEnv:
         portfolio.starting_inventory = overridden_inventory
         portfolio.inventory = overridden_inventory
         portfolio.reserved_inventory = 0.0
+
+    def _attach_frozen_agent(self, simulator: SyntheticMarketSimulator) -> None:
+        frozen_agent_id = str(self.env_config.frozen_agent_id or "").strip()
+        if not frozen_agent_id:
+            return
+        if frozen_agent_id == self.env_config.learning_agent_id:
+            raise ValueError("frozen_agent_id must be different from learning_agent_id.")
+        if self._frozen_policy is None:
+            raise ValueError("frozen_agent_checkpoint_path is required when frozen_agent_id is provided.")
+        if frozen_agent_id not in simulator.agents:
+            raise KeyError(f"Unknown frozen agent id: {frozen_agent_id}")
+        original = simulator.agents[frozen_agent_id]
+        simulator.agents[frozen_agent_id] = RuntimePolicyControlledAgent(
+            agent_id=frozen_agent_id,
+            policy=self._frozen_policy,
+            fallback_agent=original if isinstance(original, ScriptedAgent) else None,
+            agent_type="rl_agent",
+            max_resting_orders=getattr(original, "max_resting_orders", 1),
+            delegate_bootstrap=False,
+        )
+        if self.env_config.frozen_agent_starting_inventory is not None:
+            portfolio = simulator.portfolios.get(frozen_agent_id)
+            overridden_inventory = float(self.env_config.frozen_agent_starting_inventory)
+            portfolio.starting_inventory = overridden_inventory
+            portfolio.inventory = overridden_inventory
+            portfolio.reserved_inventory = 0.0
 
     def _bootstrap_pnl_trackers(self) -> None:
         if self.simulator is None:

@@ -380,6 +380,8 @@ class SyntheticMarketSimulator:
             agent_cash=portfolio.cash,
             agent_inventory=portfolio.inventory,
             agent_equity=portfolio.equity(midpoint if midpoint is not None else self.fundamental.current_value),
+            available_cash=portfolio.available_cash,
+            available_inventory=portfolio.available_inventory,
             open_orders=len(self.open_orders[agent_id]),
             active_agents=len(self.portfolios.active_portfolios()),
             portfolio_active=portfolio.active,

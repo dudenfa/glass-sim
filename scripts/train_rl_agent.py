@@ -15,7 +15,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from marl_trading.configs import available_preset_names, build_preset_config, get_preset
 from marl_trading.core.config import SimulationConfig
-from marl_trading.rl.scenario import prepare_learning_agent_config
+from marl_trading.rl.scenario import prepare_frozen_agent_config, prepare_learning_agent_config
 
 DEFAULT_CHECKPOINT_DIR = REPO_ROOT / "checkpoints"
 ALGORITHM_CHOICES = ("ppo", "maskable_ppo")
@@ -64,6 +64,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--learning-agent-template-id",
         default=None,
         help="Existing scripted agent id to clone when --add-learning-agent is enabled.",
+    )
+    parser.add_argument(
+        "--frozen-agent-checkpoint",
+        type=Path,
+        default=None,
+        help="Optional PPO checkpoint for a frozen runtime opponent inserted into the market during training.",
+    )
+    parser.add_argument(
+        "--frozen-agent-id",
+        default=None,
+        help="Agent id controlled by the frozen PPO checkpoint when --frozen-agent-checkpoint is provided.",
+    )
+    parser.add_argument(
+        "--add-frozen-agent",
+        action="store_true",
+        help="Add the frozen PPO opponent as a new participant instead of replacing an existing scripted slot.",
+    )
+    parser.add_argument(
+        "--frozen-agent-template-id",
+        default=None,
+        help="Existing scripted agent id to clone when --add-frozen-agent is enabled.",
+    )
+    parser.add_argument(
+        "--frozen-agent-starting-inventory",
+        type=float,
+        default=None,
+        help="Optional starting inventory override for the frozen PPO slot.",
     )
     parser.add_argument("--seed", type=int, default=None, help="Base seed for training episodes.")
     parser.add_argument(
@@ -198,10 +225,20 @@ def build_training_config(
     learning_agent_id: str = "trend_01",
     add_learning_agent: bool = False,
     learning_agent_template_id: str | None = None,
+    frozen_agent_id: str | None = None,
+    add_frozen_agent: bool = False,
+    frozen_agent_template_id: str | None = None,
 ) -> tuple[SimulationConfig, int]:
     config = build_preset_config(preset_name)
     if seed is not None:
         config = replace(config, seed=int(seed))
+    if frozen_agent_id is not None:
+        config = prepare_frozen_agent_config(
+            config,
+            frozen_agent_id=frozen_agent_id,
+            add_frozen_agent=add_frozen_agent,
+            frozen_agent_template_id=frozen_agent_template_id,
+        )
     config = prepare_learning_agent_config(
         config,
         learning_agent_id=learning_agent_id,
@@ -220,6 +257,19 @@ def parse_seed_schedule(raw: str | None) -> tuple[int, ...]:
     if raw is not None and not cleaned:
         raise ValueError("Expected at least one integer in --train-seeds.")
     return cleaned
+
+
+def validate_runtime_agent_args(args: argparse.Namespace) -> None:
+    frozen_agent_checkpoint = args.frozen_agent_checkpoint
+    frozen_agent_id = str(args.frozen_agent_id or "").strip()
+    if frozen_agent_checkpoint is None:
+        if args.frozen_agent_id is not None or bool(args.add_frozen_agent) or args.frozen_agent_template_id is not None:
+            raise ValueError("--frozen-agent-checkpoint is required when configuring a frozen agent.")
+        return
+    if not frozen_agent_id:
+        raise ValueError("--frozen-agent-id is required when --frozen-agent-checkpoint is provided.")
+    if frozen_agent_id == str(args.learning_agent_id):
+        raise ValueError("frozen-agent-id must be different from learning-agent-id.")
 
 
 def default_checkpoint_path(preset_name: str, learning_agent_id: str) -> Path:
@@ -291,6 +341,11 @@ def build_training_metadata(
         "learning_agent_id": str(args.learning_agent_id),
         "add_learning_agent": bool(args.add_learning_agent),
         "learning_agent_template_id": None if args.learning_agent_template_id is None else str(args.learning_agent_template_id),
+        "frozen_agent_checkpoint": None if args.frozen_agent_checkpoint is None else str(Path(args.frozen_agent_checkpoint).resolve()),
+        "frozen_agent_id": None if args.frozen_agent_id is None else str(args.frozen_agent_id),
+        "add_frozen_agent": bool(args.add_frozen_agent),
+        "frozen_agent_template_id": None if args.frozen_agent_template_id is None else str(args.frozen_agent_template_id),
+        "frozen_agent_starting_inventory": None if args.frozen_agent_starting_inventory is None else float(args.frozen_agent_starting_inventory),
         "seed": int(config.seed),
         "train_seeds": list(parse_seed_schedule(args.train_seeds)),
         "horizon": int(effective_horizon),
@@ -312,6 +367,11 @@ def build_training_metadata(
         "device": str(args.device),
         "checkpoint": str(checkpoint_path),
         "runtime_learning_agent_mode": "add" if bool(args.add_learning_agent) else "replace",
+        "runtime_frozen_agent_mode": (
+            None
+            if args.frozen_agent_id is None
+            else ("add" if bool(args.add_frozen_agent) else "replace")
+        ),
         **reward_metadata,
     }
 
@@ -322,6 +382,7 @@ def train_ppo_agent(args: argparse.Namespace) -> dict[str, Any]:
 
     if str(args.algorithm) == "maskable_ppo" and not bool(args.phase_a_action_space):
         raise ValueError("MaskablePPO is currently supported only with the simplified Phase A action space.")
+    validate_runtime_agent_args(args)
 
     config, effective_horizon = build_training_config(
         args.preset,
@@ -330,6 +391,9 @@ def train_ppo_agent(args: argparse.Namespace) -> dict[str, Any]:
         learning_agent_id=str(args.learning_agent_id),
         add_learning_agent=bool(args.add_learning_agent),
         learning_agent_template_id=None if args.learning_agent_template_id is None else str(args.learning_agent_template_id),
+        frozen_agent_id=None if args.frozen_agent_id is None else str(args.frozen_agent_id),
+        add_frozen_agent=bool(args.add_frozen_agent),
+        frozen_agent_template_id=None if args.frozen_agent_template_id is None else str(args.frozen_agent_template_id),
     )
     train_seeds = parse_seed_schedule(args.train_seeds)
     checkpoint_path = resolve_checkpoint_path(args)
@@ -338,6 +402,9 @@ def train_ppo_agent(args: argparse.Namespace) -> dict[str, Any]:
     env_config = SingleAgentEnvConfig(
         learning_agent_id=str(args.learning_agent_id),
         learning_agent_starting_inventory=float(args.learning_agent_starting_inventory),
+        frozen_agent_id=None if args.frozen_agent_id is None else str(args.frozen_agent_id),
+        frozen_agent_checkpoint_path=None if args.frozen_agent_checkpoint is None else str(Path(args.frozen_agent_checkpoint).resolve()),
+        frozen_agent_starting_inventory=None if args.frozen_agent_starting_inventory is None else float(args.frozen_agent_starting_inventory),
         train_seeds=train_seeds,
         phase_a_action_space=bool(args.phase_a_action_space),
         include_cancel_action=bool(args.include_cancel_action),
