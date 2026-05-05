@@ -19,10 +19,10 @@ from marl_trading.rl.scenario import prepare_frozen_agent_config, prepare_learni
 
 DEFAULT_CHECKPOINT_DIR = REPO_ROOT / "checkpoints"
 ALGORITHM_CHOICES = ("ppo", "maskable_ppo")
-REWARD_BASE_TERM = "realized_pnl_delta"
+REWARD_BASE_TERM = "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta"
 REWARD_FORMULA = (
-    "realized_pnl_delta - inactivity_penalty(if no trade) - abs(inventory) * reward_inventory_penalty - "
-    "inventory^2 * reward_inventory_risk_penalty"
+    "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta - inactivity_penalty(if no trade) - "
+    "abs(inventory) * reward_inventory_penalty - inventory^2 * reward_inventory_risk_penalty"
 )
 
 
@@ -142,7 +142,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reward_group = parser.add_argument_group(
         "Reward shaping",
-        "Optional shaping terms applied on top of realized PnL delta.",
+        "Optional shaping terms applied on top of realized PnL delta and mark-to-market equity delta.",
+    )
+    reward_group.add_argument(
+        "--reward-equity-delta-coefficient",
+        type=float,
+        default=0.0,
+        help="Coefficient applied to mark-to-market equity_delta in the per-step reward.",
     )
     reward_group.add_argument(
         "--reward-inactivity-penalty",
@@ -292,6 +298,7 @@ def validate_checkpoint_target(path: Path, *, force_overwrite: bool) -> None:
 
 def build_reward_metadata(
     *,
+    reward_equity_delta_coefficient: float,
     reward_inactivity_penalty: float,
     reward_inventory_penalty: float,
     reward_inventory_risk_penalty: float,
@@ -301,11 +308,16 @@ def build_reward_metadata(
         "reward_base_term": REWARD_BASE_TERM,
         "reward_formula": REWARD_FORMULA,
         "reward_summary": (
-            f"{REWARD_BASE_TERM} - {float(reward_inactivity_penalty):g} * inactivity(if no trade) - "
+            f"realized_pnl_delta + {float(reward_equity_delta_coefficient):g} * equity_delta - "
+            f"{float(reward_inactivity_penalty):g} * inactivity(if no trade) - "
             f"{float(reward_inventory_penalty):g} * abs(inventory) - "
             f"{float(reward_inventory_risk_penalty):g} * inventory^2"
         ),
         "reward_shaping": {
+            "equity_delta": {
+                "coefficient": float(reward_equity_delta_coefficient),
+                "target": "equity_delta",
+            },
             "inactivity_penalty": {
                 "coefficient": float(reward_inactivity_penalty),
                 "target": "no_trade_step",
@@ -330,6 +342,7 @@ def build_training_metadata(
     checkpoint_path: Path,
 ) -> dict[str, Any]:
     reward_metadata = build_reward_metadata(
+        reward_equity_delta_coefficient=float(args.reward_equity_delta_coefficient),
         reward_inactivity_penalty=float(args.reward_inactivity_penalty),
         reward_inventory_penalty=float(args.reward_inventory_penalty),
         reward_inventory_risk_penalty=float(args.reward_inventory_risk_penalty),
@@ -356,6 +369,7 @@ def build_training_metadata(
         "fixed_order_quantity": int(args.fixed_order_quantity),
         "fixed_price_offset_ticks": int(args.fixed_price_offset_ticks),
         "reward_inactivity_penalty": float(args.reward_inactivity_penalty),
+        "reward_equity_delta_coefficient": float(args.reward_equity_delta_coefficient),
         "reward_inventory_penalty": float(args.reward_inventory_penalty),
         "reward_inventory_risk_penalty": float(args.reward_inventory_risk_penalty),
         "max_quantity": int(args.max_quantity),
@@ -411,6 +425,7 @@ def train_ppo_agent(args: argparse.Namespace) -> dict[str, Any]:
         fixed_order_quantity=int(args.fixed_order_quantity),
         fixed_price_offset_ticks=int(args.fixed_price_offset_ticks),
         reward_realized_pnl_delta_coefficient=1.0,
+        reward_equity_delta_coefficient=float(args.reward_equity_delta_coefficient),
         reward_inventory_penalty=float(args.reward_inventory_penalty),
         reward_inventory_risk_penalty=float(args.reward_inventory_risk_penalty),
         reward_inactivity_penalty=float(args.reward_inactivity_penalty),

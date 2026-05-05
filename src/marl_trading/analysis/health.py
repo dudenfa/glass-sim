@@ -300,6 +300,8 @@ def build_portfolio_health_rows(
     *,
     starting_midpoint: float,
     agent_metrics: Mapping[str, Mapping[str, Any]] | None = None,
+    starting_inventory_overrides: Mapping[str, float] | None = None,
+    starting_cash_overrides: Mapping[str, float] | None = None,
 ) -> list[PortfolioHealthRow]:
     config_by_id = {
         _agent_id_text(getattr(agent_cfg, "agent_id", "")): agent_cfg
@@ -322,8 +324,24 @@ def build_portfolio_health_rows(
                 extra_metrics.get("agent_type", getattr(agent_cfg, "agent_type", "unknown")),
             )
         )
-        starting_cash = float(getattr(agent_cfg, "starting_cash", final_summary.get("starting_cash", final_summary.get("cash", 0.0))))
-        starting_inventory = float(getattr(agent_cfg, "starting_inventory", _default_starting_inventory(agent_type)))
+        starting_cash = float(
+            (starting_cash_overrides or {}).get(
+                agent_id,
+                final_summary.get(
+                    "starting_cash",
+                    getattr(agent_cfg, "starting_cash", final_summary.get("cash", 0.0)),
+                ),
+            )
+        )
+        starting_inventory = float(
+            (starting_inventory_overrides or {}).get(
+                agent_id,
+                final_summary.get(
+                    "starting_inventory",
+                    getattr(agent_cfg, "starting_inventory", _default_starting_inventory(agent_type)),
+                ),
+            )
+        )
         starting_equity = starting_cash + starting_inventory * float(starting_midpoint)
         starting_free_equity = starting_equity
         ending_cash = float(final_summary.get("cash", starting_cash))
@@ -375,7 +393,10 @@ def build_agent_health_metrics(
     *,
     starting_midpoint: float,
     final_mark_price: float,
+    final_portfolios: Mapping[str, Mapping[str, Any]] | None = None,
     open_orders_by_agent: Mapping[str, int] | None = None,
+    starting_inventory_overrides: Mapping[str, float] | None = None,
+    starting_cash_overrides: Mapping[str, float] | None = None,
 ) -> dict[str, dict[str, Any]]:
     config_by_id = {
         _agent_id_text(getattr(agent_cfg, "agent_id", "")): agent_cfg
@@ -384,8 +405,18 @@ def build_agent_health_metrics(
     }
     trackers: dict[str, _PnlTracker] = {}
     for agent_id, agent_cfg in config_by_id.items():
-        starting_cash = float(getattr(agent_cfg, "starting_cash", 0.0))
-        starting_inventory = float(getattr(agent_cfg, "starting_inventory", _default_starting_inventory(getattr(agent_cfg, "agent_type", "unknown"))))
+        starting_cash = float(
+            (starting_cash_overrides or {}).get(
+                agent_id,
+                getattr(agent_cfg, "starting_cash", 0.0),
+            )
+        )
+        starting_inventory = float(
+            (starting_inventory_overrides or {}).get(
+                agent_id,
+                getattr(agent_cfg, "starting_inventory", _default_starting_inventory(getattr(agent_cfg, "agent_type", "unknown"))),
+            )
+        )
         trackers[agent_id] = _PnlTracker(
             starting_cash=starting_cash,
             starting_inventory=starting_inventory,
@@ -430,7 +461,15 @@ def build_agent_health_metrics(
 
     metrics: dict[str, dict[str, Any]] = {}
     for agent_id, tracker in trackers.items():
-        unrealized_pnl = tracker.inventory * float(final_mark_price) - tracker.cost_basis
+        final_summary = dict((final_portfolios or {}).get(agent_id, {}))
+        portfolio_mark_price = final_summary.get("mark_price")
+        if portfolio_mark_price is None and abs(tracker.inventory) > 1e-12:
+            ending_cash = final_summary.get("cash")
+            ending_equity = final_summary.get("equity")
+            if ending_cash is not None and ending_equity is not None:
+                portfolio_mark_price = (float(ending_equity) - float(ending_cash)) / float(tracker.inventory)
+        agent_final_mark_price = float(portfolio_mark_price) if portfolio_mark_price is not None else float(final_mark_price)
+        unrealized_pnl = tracker.inventory * agent_final_mark_price - tracker.cost_basis
         agent_cfg = config_by_id.get(agent_id)
         metrics[agent_id] = {
             "agent_type": getattr(agent_cfg, "agent_type", "unknown"),

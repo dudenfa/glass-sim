@@ -26,6 +26,7 @@ def test_parse_args_defaults_to_trend_slot() -> None:
     assert args.include_cancel_action is False
     assert args.fixed_order_quantity == 1
     assert args.fixed_price_offset_ticks == 1
+    assert args.reward_equity_delta_coefficient == 0.0
     assert args.reward_inactivity_penalty == 0.0
     assert args.reward_inventory_penalty == 0.0
     assert args.reward_inventory_risk_penalty == 0.0
@@ -36,7 +37,8 @@ def test_build_parser_help_describes_reward_shaping() -> None:
     help_text = train_rl_agent.build_parser().format_help()
 
     assert "Reward shaping" in help_text
-    assert "realized_pnl_delta - inactivity_penalty" in help_text
+    assert "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta" in help_text
+    assert "--reward-equity-delta-coefficient" in help_text
     assert "--reward-inactivity-penalty" in help_text
     assert "--inv-penalty" in help_text
     assert "--reward-inventory-risk-penalty" in help_text
@@ -49,6 +51,8 @@ def test_parse_args_accepts_short_reward_aliases() -> None:
             "128",
             "--reward-inactivity-penalty",
             "0.2",
+            "--reward-equity-delta-coefficient",
+            "0.15",
             "--inv-penalty",
             "0.1",
             "--inv-risk-penalty",
@@ -56,6 +60,7 @@ def test_parse_args_accepts_short_reward_aliases() -> None:
         ]
     )
 
+    assert args.reward_equity_delta_coefficient == 0.15
     assert args.reward_inactivity_penalty == 0.2
     assert args.reward_inventory_penalty == 0.1
     assert args.reward_inventory_risk_penalty == 0.05
@@ -172,6 +177,8 @@ def test_build_training_metadata_includes_inventory_risk_penalty(tmp_path: Path)
             "128",
             "--reward-inactivity-penalty",
             "0.2",
+            "--reward-equity-delta-coefficient",
+            "0.15",
             "--reward-inventory-penalty",
             "0.1",
             "--reward-inventory-risk-penalty",
@@ -186,6 +193,7 @@ def test_build_training_metadata_includes_inventory_risk_penalty(tmp_path: Path)
         checkpoint_path=tmp_path / "ppo.zip",
     )
 
+    assert metadata["reward_equity_delta_coefficient"] == 0.15
     assert metadata["reward_inactivity_penalty"] == 0.2
     assert metadata["reward_inventory_penalty"] == 0.1
     assert metadata["reward_inventory_risk_penalty"] == 0.05
@@ -194,15 +202,16 @@ def test_build_training_metadata_includes_inventory_risk_penalty(tmp_path: Path)
     assert metadata["include_cancel_action"] is False
     assert metadata["fixed_order_quantity"] == 1
     assert metadata["fixed_price_offset_ticks"] == 1
-    assert metadata["reward_signal"] == "realized_pnl_delta"
-    assert metadata["reward_base_term"] == "realized_pnl_delta"
+    assert metadata["reward_signal"] == "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta"
+    assert metadata["reward_base_term"] == "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta"
     assert metadata["reward_formula"] == (
-        "realized_pnl_delta - inactivity_penalty(if no trade) - abs(inventory) * reward_inventory_penalty - "
-        "inventory^2 * reward_inventory_risk_penalty"
+        "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta - inactivity_penalty(if no trade) - "
+        "abs(inventory) * reward_inventory_penalty - inventory^2 * reward_inventory_risk_penalty"
     )
     assert metadata["reward_summary"] == (
-        "realized_pnl_delta - 0.2 * inactivity(if no trade) - 0.1 * abs(inventory) - 0.05 * inventory^2"
+        "realized_pnl_delta + 0.15 * equity_delta - 0.2 * inactivity(if no trade) - 0.1 * abs(inventory) - 0.05 * inventory^2"
     )
+    assert metadata["reward_shaping"]["equity_delta"]["coefficient"] == 0.15
     assert metadata["reward_shaping"]["inactivity_penalty"]["coefficient"] == 0.2
     assert metadata["reward_shaping"]["linear_inventory_penalty"]["coefficient"] == 0.1
     assert metadata["reward_shaping"]["quadratic_inventory_risk_penalty"]["coefficient"] == 0.05

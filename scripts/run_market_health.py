@@ -78,7 +78,12 @@ def build_market_health_report(
     )
     portfolio_rows = None
     if portfolio_breakdown:
-        final_mark_price = float(summary.final_midpoint if summary.final_midpoint is not None else summary.final_fundamental or config.market.starting_mid_price)
+        final_mark_price = float(
+            dict(getattr(result, "summary", {})).get("final_mark_price")
+            or summary.final_midpoint
+            or summary.final_fundamental
+            or config.market.starting_mid_price
+        )
         agent_metrics = build_agent_health_metrics(
             list(result.event_log.events),
             config.agents,

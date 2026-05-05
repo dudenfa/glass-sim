@@ -203,6 +203,30 @@ def test_build_agent_health_metrics_tracks_realized_and_unrealized_pnl() -> None
     assert metrics["taker_1"]["open_orders"] == 0
 
 
+def test_build_portfolio_health_rows_respects_runtime_starting_inventory_override() -> None:
+    final_portfolios = {
+        "rl_01": {
+            "starting_cash": 10_000.0,
+            "starting_inventory": 0.0,
+            "cash": 10_100.0,
+            "inventory": 1.0,
+            "equity": 10_200.0,
+            "free_equity": 10_200.0,
+            "status": "active",
+        }
+    }
+    rows = build_portfolio_health_rows(
+        final_portfolios,
+        [SimpleNamespace(agent_id="rl_01", agent_type="trend_follower", starting_cash=10_000.0, ruin_threshold=4_000.0)],
+        starting_midpoint=100.0,
+        starting_inventory_overrides={"rl_01": 0.0},
+    )
+
+    assert rows[0].starting_inventory == pytest.approx(0.0)
+    assert rows[0].starting_equity == pytest.approx(10_000.0)
+    assert rows[0].total_pnl == pytest.approx(200.0)
+
+
 def test_format_portfolio_health_breakdown_is_readable() -> None:
     rows = [
         build_portfolio_health_rows(

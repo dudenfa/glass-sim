@@ -17,11 +17,11 @@ from marl_trading.configs import available_preset_names, build_preset_config, ge
 from marl_trading.core.config import SimulationConfig
 from marl_trading.rl.scenario import prepare_frozen_agent_config, prepare_learning_agent_config
 
-REWARD_BASE_TERM = "realized_pnl_delta"
+REWARD_BASE_TERM = "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta"
 ALGORITHM_CHOICES = ("auto", "ppo", "maskable_ppo")
 REWARD_FORMULA = (
-    "realized_pnl_delta - inactivity_penalty(if no trade) - abs(inventory) * reward_inventory_penalty - "
-    "inventory^2 * reward_inventory_risk_penalty"
+    "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta - inactivity_penalty(if no trade) - "
+    "abs(inventory) * reward_inventory_penalty - inventory^2 * reward_inventory_risk_penalty"
 )
 
 
@@ -136,7 +136,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reward_group = parser.add_argument_group(
         "Reward shaping",
-        "Optional shaping terms applied on top of realized PnL delta.",
+        "Optional shaping terms applied on top of realized PnL delta and mark-to-market equity delta.",
+    )
+    reward_group.add_argument(
+        "--reward-equity-delta-coefficient",
+        type=float,
+        default=0.0,
+        help="Coefficient applied to mark-to-market equity_delta in the per-step reward.",
     )
     reward_group.add_argument(
         "--reward-inactivity-penalty",
@@ -275,6 +281,7 @@ def build_eval_config(
 
 def build_reward_metadata(
     *,
+    reward_equity_delta_coefficient: float,
     reward_inactivity_penalty: float,
     reward_inventory_penalty: float,
     reward_inventory_risk_penalty: float,
@@ -284,11 +291,16 @@ def build_reward_metadata(
         "reward_base_term": REWARD_BASE_TERM,
         "reward_formula": REWARD_FORMULA,
         "reward_summary": (
-            f"{REWARD_BASE_TERM} - {float(reward_inactivity_penalty):g} * inactivity(if no trade) - "
+            f"realized_pnl_delta + {float(reward_equity_delta_coefficient):g} * equity_delta - "
+            f"{float(reward_inactivity_penalty):g} * inactivity(if no trade) - "
             f"{float(reward_inventory_penalty):g} * abs(inventory) - "
             f"{float(reward_inventory_risk_penalty):g} * inventory^2"
         ),
         "reward_shaping": {
+            "equity_delta": {
+                "coefficient": float(reward_equity_delta_coefficient),
+                "target": "equity_delta",
+            },
             "inactivity_penalty": {
                 "coefficient": float(reward_inactivity_penalty),
                 "target": "no_trade_step",
@@ -323,6 +335,7 @@ def build_rl_evaluation_payload(
     include_cancel_action: bool,
     fixed_order_quantity: int,
     fixed_price_offset_ticks: int,
+    reward_equity_delta_coefficient: float,
     reward_inactivity_penalty: float,
     reward_inventory_penalty: float,
     reward_inventory_risk_penalty: float,
@@ -340,11 +353,18 @@ def build_rl_evaluation_payload(
         summarize_market_health,
     )
 
+    starting_inventory_overrides: dict[str, float] = {}
+    if learning_agent_id:
+        starting_inventory_overrides[str(learning_agent_id)] = float(learning_agent_starting_inventory)
+    if frozen_agent_id is not None and frozen_agent_starting_inventory is not None:
+        starting_inventory_overrides[str(frozen_agent_id)] = float(frozen_agent_starting_inventory)
+
     summary = summarize_market_health(result)
     final_mark_price = float(
-        summary.final_midpoint
-        if summary.final_midpoint is not None
-        else summary.final_fundamental or config.market.starting_mid_price
+        dict(getattr(result, "summary", {})).get("final_mark_price")
+        or summary.final_midpoint
+        or summary.final_fundamental
+        or config.market.starting_mid_price
     )
     order_counts = {str(agent_id): int(count) for agent_id, count in (open_orders_by_agent or {}).items()}
     agent_metrics = build_agent_health_metrics(
@@ -352,34 +372,17 @@ def build_rl_evaluation_payload(
         config.agents,
         starting_midpoint=float(config.market.starting_mid_price),
         final_mark_price=final_mark_price,
+        final_portfolios=result.final_portfolios,
         open_orders_by_agent=order_counts,
+        starting_inventory_overrides=starting_inventory_overrides,
     )
     portfolio_rows = build_portfolio_health_rows(
         result.final_portfolios,
         config.agents,
         starting_midpoint=float(config.market.starting_mid_price),
         agent_metrics=agent_metrics,
+        starting_inventory_overrides=starting_inventory_overrides,
     )
-    adjusted_rows = []
-    for row in portfolio_rows:
-        if row.agent_id != learning_agent_id:
-            adjusted_rows.append(row)
-            continue
-        adjusted_starting_inventory = float(learning_agent_starting_inventory)
-        adjusted_starting_equity = float(row.starting_cash + adjusted_starting_inventory * float(config.market.starting_mid_price))
-        adjusted_starting_free_equity = adjusted_starting_equity if row.starting_free_equity is not None else None
-        adjusted_rows.append(
-            replace(
-                row,
-                starting_inventory=adjusted_starting_inventory,
-                starting_equity=adjusted_starting_equity,
-                starting_free_equity=adjusted_starting_free_equity,
-                inventory_delta=float(row.ending_inventory - adjusted_starting_inventory),
-                equity_delta=float(row.ending_equity - adjusted_starting_equity),
-                total_pnl=float(row.ending_equity - adjusted_starting_equity),
-            )
-        )
-    portfolio_rows = adjusted_rows
     report = "\n\n".join(
         [
             format_market_health_summary(summary, preset_name=preset_name, seed=config.seed, horizon=horizon),
@@ -388,6 +391,7 @@ def build_rl_evaluation_payload(
     )
     serialized_rows = [row.to_dict() for row in portfolio_rows]
     reward_metadata = build_reward_metadata(
+        reward_equity_delta_coefficient=reward_equity_delta_coefficient,
         reward_inactivity_penalty=reward_inactivity_penalty,
         reward_inventory_penalty=reward_inventory_penalty,
         reward_inventory_risk_penalty=reward_inventory_risk_penalty,
@@ -419,6 +423,7 @@ def build_rl_evaluation_payload(
             "include_cancel_action": bool(include_cancel_action),
             "fixed_order_quantity": int(fixed_order_quantity),
             "fixed_price_offset_ticks": int(fixed_price_offset_ticks),
+            "reward_equity_delta_coefficient": float(reward_equity_delta_coefficient),
             "reward_inactivity_penalty": float(reward_inactivity_penalty),
             "reward_inventory_penalty": float(reward_inventory_penalty),
             "reward_inventory_risk_penalty": float(reward_inventory_risk_penalty),
@@ -488,6 +493,7 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         fixed_order_quantity=int(args.fixed_order_quantity),
         fixed_price_offset_ticks=int(args.fixed_price_offset_ticks),
         reward_realized_pnl_delta_coefficient=1.0,
+        reward_equity_delta_coefficient=float(args.reward_equity_delta_coefficient),
         reward_inventory_penalty=float(args.reward_inventory_penalty),
         reward_inventory_risk_penalty=float(args.reward_inventory_risk_penalty),
         reward_inactivity_penalty=float(args.reward_inactivity_penalty),
@@ -533,6 +539,7 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         include_cancel_action=bool(args.include_cancel_action),
         fixed_order_quantity=int(args.fixed_order_quantity),
         fixed_price_offset_ticks=int(args.fixed_price_offset_ticks),
+        reward_equity_delta_coefficient=float(args.reward_equity_delta_coefficient),
         reward_inactivity_penalty=float(args.reward_inactivity_penalty),
         reward_inventory_penalty=float(args.reward_inventory_penalty),
         reward_inventory_risk_penalty=float(args.reward_inventory_risk_penalty),

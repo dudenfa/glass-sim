@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from marl_trading.agents.base import MarketObservation, OrderIntent, ScriptedAgent
-from marl_trading.analysis import EventLog, EventType, summarize_event_log
+from marl_trading.analysis import EventLog, EventType, OrderBookLevel, OrderBookSnapshot, summarize_event_log
 from marl_trading.configs.defaults import default_simulation_config
 from marl_trading.exchange.models import OrderType, Side
 from marl_trading.market import SyntheticMarketSimulator
@@ -115,3 +115,25 @@ def test_simulator_accepts_multiple_intents_from_single_decision_step() -> None:
 
     assert annotations.count("test_bid") == 1
     assert annotations.count("test_ask") == 1
+
+
+def test_mark_price_for_inventory_prefers_executable_prices_over_fundamental() -> None:
+    sim = SyntheticMarketSimulator(default_simulation_config(), horizon=3)
+    sim.reset(seed=7, horizon=3)
+    sim.last_trade_price = 100.25
+    snapshot = OrderBookSnapshot(
+        timestamp=1.0,
+        bids=(OrderBookLevel(99.75, 5.0),),
+        asks=(OrderBookLevel(100.25, 5.0),),
+    )
+
+    assert sim.mark_price_for_inventory(3.0, snapshot=snapshot) == pytest.approx(99.75)
+    assert sim.mark_price_for_inventory(-2.0, snapshot=snapshot) == pytest.approx(100.25)
+    assert sim.mark_price_for_inventory(0.0, snapshot=snapshot) == pytest.approx(100.0)
+
+    ask_only = OrderBookSnapshot(
+        timestamp=2.0,
+        bids=(),
+        asks=(OrderBookLevel(101.0, 4.0),),
+    )
+    assert sim.mark_price_for_inventory(3.0, snapshot=ask_only) == pytest.approx(100.25)

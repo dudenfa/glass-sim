@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from marl_trading.configs import build_preset_config
 from marl_trading.market.simulator import SyntheticMarketSimulator
+from marl_trading.rl.live import RuntimePolicyDecision
+from marl_trading.rl.boundary import RLAction, RLActionType
+from marl_trading.rl import SingleAgentEnvConfig, SingleAgentMarketEnv
 from scripts import eval_rl_agent
 
 
@@ -25,6 +30,7 @@ def test_parse_args_requires_checkpoint() -> None:
     assert args.include_cancel_action is False
     assert args.fixed_order_quantity == 1
     assert args.fixed_price_offset_ticks == 1
+    assert args.reward_equity_delta_coefficient == 0.0
     assert args.reward_inactivity_penalty == 0.0
     assert args.reward_inventory_penalty == 0.0
     assert args.reward_inventory_risk_penalty == 0.0
@@ -35,7 +41,8 @@ def test_build_parser_help_describes_reward_shaping() -> None:
     help_text = eval_rl_agent.build_parser().format_help()
 
     assert "Reward shaping" in help_text
-    assert "realized_pnl_delta - inactivity_penalty" in help_text
+    assert "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta" in help_text
+    assert "--reward-equity-delta-coefficient" in help_text
     assert "--reward-inactivity-penalty" in help_text
     assert "--inv-penalty" in help_text
     assert "--reward-inventory-risk-penalty" in help_text
@@ -48,6 +55,8 @@ def test_parse_args_accepts_short_reward_aliases() -> None:
             "model.zip",
             "--reward-inactivity-penalty",
             "0.2",
+            "--reward-equity-delta-coefficient",
+            "0.15",
             "--inv-penalty",
             "0.1",
             "--inv-risk-penalty",
@@ -55,6 +64,7 @@ def test_parse_args_accepts_short_reward_aliases() -> None:
         ]
     )
 
+    assert args.reward_equity_delta_coefficient == 0.15
     assert args.reward_inactivity_penalty == 0.2
     assert args.reward_inventory_penalty == 0.1
     assert args.reward_inventory_risk_penalty == 0.05
@@ -165,6 +175,7 @@ def test_build_rl_evaluation_payload_matches_market_health_shape(tmp_path: Path)
         include_cancel_action=False,
         fixed_order_quantity=1,
         fixed_price_offset_ticks=1,
+        reward_equity_delta_coefficient=0.15,
         reward_inactivity_penalty=0.2,
         reward_inventory_penalty=0.1,
         reward_inventory_risk_penalty=0.05,
@@ -191,18 +202,20 @@ def test_build_rl_evaluation_payload_matches_market_health_shape(tmp_path: Path)
     assert payload["metadata"]["include_cancel_action"] is False
     assert payload["metadata"]["fixed_order_quantity"] == 1
     assert payload["metadata"]["fixed_price_offset_ticks"] == 1
+    assert payload["metadata"]["reward_equity_delta_coefficient"] == 0.15
     assert payload["metadata"]["reward_inactivity_penalty"] == 0.2
     assert payload["metadata"]["reward_inventory_penalty"] == 0.1
     assert payload["metadata"]["reward_inventory_risk_penalty"] == 0.05
-    assert payload["metadata"]["reward_signal"] == "realized_pnl_delta"
-    assert payload["metadata"]["reward_base_term"] == "realized_pnl_delta"
+    assert payload["metadata"]["reward_signal"] == "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta"
+    assert payload["metadata"]["reward_base_term"] == "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta"
     assert payload["metadata"]["reward_formula"] == (
-        "realized_pnl_delta - inactivity_penalty(if no trade) - abs(inventory) * reward_inventory_penalty - "
-        "inventory^2 * reward_inventory_risk_penalty"
+        "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta - inactivity_penalty(if no trade) - "
+        "abs(inventory) * reward_inventory_penalty - inventory^2 * reward_inventory_risk_penalty"
     )
     assert payload["metadata"]["reward_summary"] == (
-        "realized_pnl_delta - 0.2 * inactivity(if no trade) - 0.1 * abs(inventory) - 0.05 * inventory^2"
+        "realized_pnl_delta + 0.15 * equity_delta - 0.2 * inactivity(if no trade) - 0.1 * abs(inventory) - 0.05 * inventory^2"
     )
+    assert payload["metadata"]["reward_shaping"]["equity_delta"]["coefficient"] == 0.15
     assert payload["metadata"]["reward_shaping"]["inactivity_penalty"]["coefficient"] == 0.2
     assert payload["metadata"]["reward_shaping"]["linear_inventory_penalty"]["coefficient"] == 0.1
     assert payload["metadata"]["reward_shaping"]["quadratic_inventory_risk_penalty"]["coefficient"] == 0.05
@@ -235,6 +248,7 @@ def test_build_rl_evaluation_payload_adjusts_learning_slot_starting_inventory(tm
         include_cancel_action=False,
         fixed_order_quantity=1,
         fixed_price_offset_ticks=1,
+        reward_equity_delta_coefficient=0.0,
         reward_inactivity_penalty=0.0,
         reward_inventory_penalty=0.0,
         reward_inventory_risk_penalty=0.0,
@@ -248,6 +262,83 @@ def test_build_rl_evaluation_payload_adjusts_learning_slot_starting_inventory(tm
     trend = next(agent for agent in payload["portfolio_breakdown"] if agent["agent_id"] == "trend_01")
     assert trend["starting_inventory"] == 0.0
     assert trend["starting_equity"] == 10000.0
+
+
+def test_build_rl_evaluation_payload_adjusts_frozen_and_learning_runtime_starting_inventory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _StubFrozenPolicy:
+        def action_for(self, observation) -> RuntimePolicyDecision:  # noqa: ARG002
+            return RuntimePolicyDecision(
+                features=(),
+                raw_action=(0,),
+                rl_action=RLAction(RLActionType.HOLD),
+            )
+
+    config = eval_rl_agent.build_eval_config(
+        "baseline",
+        learning_agent_id="rl_02",
+        add_learning_agent=True,
+        learning_agent_template_id="trend_01",
+        frozen_agent_id="rl_01",
+        add_frozen_agent=True,
+        frozen_agent_template_id="trend_01",
+    )[0]
+    monkeypatch.setattr(SingleAgentMarketEnv, "_load_frozen_policy", lambda self: _StubFrozenPolicy())
+    env = SingleAgentMarketEnv(
+        config=config,
+        env_config=SingleAgentEnvConfig(
+            learning_agent_id="rl_02",
+            learning_agent_starting_inventory=0.0,
+            frozen_agent_id="rl_01",
+            frozen_agent_checkpoint_path=str(tmp_path / "frozen.zip"),
+            frozen_agent_starting_inventory=0.0,
+        ),
+        horizon=24,
+    )
+    env.reset(seed=7, horizon=24)
+    result = env.build_run_result()
+
+    payload = eval_rl_agent.build_rl_evaluation_payload(
+        checkpoint_path=tmp_path / "ppo.zip",
+        algorithm="ppo",
+        preset_name="baseline",
+        learning_agent_id="rl_02",
+        add_learning_agent=True,
+        learning_agent_template_id="trend_01",
+        learning_agent_starting_inventory=0.0,
+        frozen_agent_checkpoint=tmp_path / "frozen.zip",
+        frozen_agent_id="rl_01",
+        add_frozen_agent=True,
+        frozen_agent_template_id="trend_01",
+        frozen_agent_starting_inventory=0.0,
+        phase_a_action_space=True,
+        include_cancel_action=False,
+        fixed_order_quantity=1,
+        fixed_price_offset_ticks=1,
+        reward_equity_delta_coefficient=0.0,
+        reward_inactivity_penalty=0.0,
+        reward_inventory_penalty=0.0,
+        reward_inventory_risk_penalty=0.0,
+        result=result,
+        config=config,
+        horizon=24,
+        deterministic=True,
+        open_orders_by_agent={
+            agent_id: len(queue)
+            for agent_id, queue in env.simulator.open_orders.items()
+        },
+    )
+
+    rl_01 = next(agent for agent in payload["portfolio_breakdown"] if agent["agent_id"] == "rl_01")
+    rl_02 = next(agent for agent in payload["portfolio_breakdown"] if agent["agent_id"] == "rl_02")
+    assert rl_01["starting_inventory"] == 0.0
+    assert rl_01["starting_equity"] == 10000.0
+    assert rl_01["total_pnl"] == pytest.approx(rl_01["realized_pnl"] + rl_01["unrealized_pnl"])
+    assert rl_02["starting_inventory"] == 0.0
+    assert rl_02["starting_equity"] == 10000.0
+    assert rl_02["total_pnl"] == pytest.approx(rl_02["realized_pnl"] + rl_02["unrealized_pnl"])
 
 
 def test_build_eval_config_can_add_learning_agent() -> None:

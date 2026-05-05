@@ -364,6 +364,7 @@ class SyntheticMarketSimulator:
     ) -> MarketObservation:
         midpoint = snapshot.midpoint()
         spread = snapshot.spread()
+        mark_price = self.mark_price_for_inventory(float(portfolio.inventory), snapshot=snapshot)
         return MarketObservation(
             timestamp_ns=timestamp_ns,
             symbol=self.market_config.symbol.value,
@@ -379,7 +380,7 @@ class SyntheticMarketSimulator:
             news_severity=None if news is None else news.severity,
             agent_cash=portfolio.cash,
             agent_inventory=portfolio.inventory,
-            agent_equity=portfolio.equity(midpoint if midpoint is not None else self.fundamental.current_value),
+            agent_equity=portfolio.equity(mark_price),
             available_cash=portfolio.available_cash,
             available_inventory=portfolio.available_inventory,
             open_orders=len(self.open_orders[agent_id]),
@@ -387,6 +388,49 @@ class SyntheticMarketSimulator:
             portfolio_active=portfolio.active,
             agent_type=self.agents[agent_id].agent_type,
             public_note=f"step={step_index}",
+        )
+
+    def mark_price_for_inventory(
+        self,
+        inventory: float,
+        *,
+        snapshot: OrderBookSnapshot | None = None,
+    ) -> float:
+        book = snapshot if snapshot is not None else self._current_book_snapshot(self._current_step_index)
+        inventory_value = float(inventory)
+        best_bid = book.best_bid()
+        best_ask = book.best_ask()
+        midpoint = book.midpoint()
+
+        if inventory_value > 1e-12 and best_bid is not None:
+            return float(best_bid)
+        if inventory_value < -1e-12 and best_ask is not None:
+            return float(best_ask)
+        if midpoint is not None:
+            return float(midpoint)
+        if self.last_trade_price is not None:
+            return float(self.last_trade_price)
+        if best_bid is not None:
+            return float(best_bid)
+        if best_ask is not None:
+            return float(best_ask)
+        return float(self.start_midpoint)
+
+    def mark_price_for_portfolio(
+        self,
+        portfolio: SpotPortfolio,
+        *,
+        snapshot: OrderBookSnapshot | None = None,
+    ) -> float:
+        return self.mark_price_for_inventory(float(portfolio.inventory), snapshot=snapshot)
+
+    def aggregate_marked_total_equity(self, snapshot: OrderBookSnapshot | None = None) -> float:
+        book = snapshot if snapshot is not None else self._current_book_snapshot(self._current_step_index)
+        return float(
+            sum(
+                portfolio.equity(self.mark_price_for_portfolio(portfolio, snapshot=book))
+                for portfolio in self.portfolios.portfolios.values()
+            )
         )
 
     def _log_event(
@@ -626,7 +670,7 @@ class SyntheticMarketSimulator:
 
     def _deactivate_ruined_agents(self, timestamp_ns: int) -> None:
         snapshot = self._current_book_snapshot(timestamp_ns)
-        mark_price = snapshot.midpoint() or self.fundamental.current_value
+        mark_price = snapshot.midpoint() or self.last_trade_price or self.start_midpoint
         deactivated = self.portfolios.deactivate_ruined(mark_price=mark_price, timestamp_ns=timestamp_ns)
         for portfolio in deactivated:
             agent_id = portfolio.agent_id
@@ -806,7 +850,7 @@ class SyntheticMarketSimulator:
         self.price_history.append(float(self.last_trade_price))
         self.midpoint_history.append(snapshot.midpoint())
         self.fundamental_history.append(float(self.fundamental.current_value))
-        total_equity = sum(portfolio.equity(midpoint) for portfolio in self.portfolios.portfolios.values())
+        total_equity = self.aggregate_marked_total_equity(snapshot)
         self._log_event(
             event_type=EventType.SNAPSHOT,
             timestamp_ns=timestamp_ns,
@@ -930,7 +974,6 @@ class SyntheticMarketSimulator:
                 self.exchange.snapshot(depth=full_depth, timestamp=self._current_step_index),
                 self.tick_size,
             )
-        current_midpoint = top_snapshot.midpoint() or self.fundamental.current_value
         recent_events = list(self.event_log.events[-max(recent_limit, 1):])
         visible_event_types = {
             EventType.LIMIT_ORDER.value,
@@ -958,7 +1001,7 @@ class SyntheticMarketSimulator:
         ]
         portfolios = [
             {
-                **portfolio.summary(current_midpoint),
+                **portfolio.summary(self.mark_price_for_portfolio(portfolio, snapshot=top_snapshot)),
                 "agent_type": self.agents[agent_id].agent_type,
                 "open_orders": len(self.open_orders.get(agent_id, [])),
                 "active": portfolio.active,
@@ -1016,10 +1059,15 @@ class SyntheticMarketSimulator:
                 "final_fundamental": self.fundamental.current_value,
                 "active_agent_count": len(self.portfolios.active_portfolios()),
                 "final_midpoint": summary.get("final_midpoint") or self.fundamental.current_value,
+                "final_mark_price": self.mark_price_for_inventory(
+                    1.0,
+                    snapshot=self._current_book_snapshot(self._current_step_index),
+                ),
             }
         )
+        final_snapshot = self._current_book_snapshot(self._current_step_index)
         final_portfolios = {
-            agent_id: portfolio.summary(self.fundamental.current_value)
+            agent_id: portfolio.summary(self.mark_price_for_portfolio(portfolio, snapshot=final_snapshot))
             for agent_id, portfolio in self.portfolios.portfolios.items()
         }
         return MarketRunResult(

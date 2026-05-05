@@ -89,7 +89,7 @@ class SingleAgentEnvConfig:
     reward_realized_pnl_delta_coefficient: float = 0.0
     reward_inventory_penalty: float = 0.0
     reward_inventory_risk_penalty: float = 0.0
-    reward_equity_delta_coefficient: float = 1.0
+    reward_equity_delta_coefficient: float = 0.0
     reward_inactivity_penalty: float = 0.0
     terminate_on_ruin: bool = True
     auto_increment_seed_on_reset: bool = False
@@ -468,10 +468,15 @@ class SingleAgentMarketEnv:
                 "final_fundamental": self.simulator.fundamental.current_value,
                 "active_agent_count": len(self.simulator.portfolios.active_portfolios()),
                 "final_midpoint": summary.get("final_midpoint") or self.simulator.fundamental.current_value,
+                "final_mark_price": self.simulator.mark_price_for_inventory(
+                    1.0,
+                    snapshot=self.simulator._current_book_snapshot(self.simulator.current_step_index),  # noqa: SLF001
+                ),
             }
         )
+        final_snapshot = self.simulator._current_book_snapshot(self.simulator.current_step_index)  # noqa: SLF001
         final_portfolios = {
-            agent_id: portfolio.summary(self.simulator.fundamental.current_value)
+            agent_id: portfolio.summary(self.simulator.mark_price_for_portfolio(portfolio, snapshot=final_snapshot))
             for agent_id, portfolio in self.simulator.portfolios.portfolios.items()
         }
         return MarketRunResult(

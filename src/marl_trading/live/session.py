@@ -396,7 +396,7 @@ class LiveMarketSession:
     def _event_type(self, event: MarketEvent) -> str:
         return event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
 
-    def _build_agent_states(self, mark_price: float) -> list[dict[str, Any]]:
+    def _build_agent_states(self, snapshot: OrderBookSnapshot) -> list[dict[str, Any]]:
         agents: list[dict[str, Any]] = []
         for agent_id, portfolio in self.simulator.portfolios.portfolios.items():
             tracker = self._pnl_trackers.get(
@@ -409,6 +409,7 @@ class LiveMarketSession:
                     cost_basis=float(portfolio.inventory) * float(self.simulator.start_midpoint),
                 ),
             )
+            mark_price = self.simulator.mark_price_for_portfolio(portfolio, snapshot=snapshot)
             unrealized_pnl = tracker.inventory * float(mark_price) - tracker.cost_basis
             summary = portfolio.summary(mark_price)
             last_action_event = self._last_action_by_agent.get(agent_id)
@@ -465,7 +466,6 @@ class LiveMarketSession:
                 len(self.simulator.exchange.book._asks),  # noqa: SLF001
             )
         full_snapshot = self._analysis_snapshot(depth=max(full_depth, 1), timestamp_ns=current_step) if full_book else top_snapshot
-        mark_price = float(top_snapshot.midpoint() or self.simulator.fundamental.current_value)
         recent_events = [self._event_to_dict(event) for event in self.simulator.event_log.events[-self.event_limit :]]
         recent_trades = [trade for trade in self._trade_history[-self.event_limit :]]
         line = self._build_line()
@@ -528,7 +528,7 @@ class LiveMarketSession:
                     "payload": payload,
                 }
             )
-        agents = self._build_agent_states(mark_price)
+        agents = self._build_agent_states(top_snapshot)
         rl_agents = [agent for agent in agents if str(agent.get("agent_type")) == "rl_agent"]
         rl_diagnostics = []
         for agent in rl_agents:
@@ -578,7 +578,7 @@ class LiveMarketSession:
             "best_bid": top_snapshot.best_bid(),
             "best_ask": top_snapshot.best_ask(),
             "active_agents": len(self.simulator.portfolios.active_portfolios()),
-            "total_equity": float(sum(portfolio.equity(mark_price) for portfolio in self.simulator.portfolios.portfolios.values())),
+            "total_equity": self.simulator.aggregate_marked_total_equity(top_snapshot),
             "order_book": {
                 "timestamp_ns": int(top_snapshot.timestamp),
                 "best_bid": top_snapshot.best_bid(),
