@@ -197,10 +197,105 @@ def test_build_agent_health_metrics_tracks_realized_and_unrealized_pnl() -> None
 
     assert metrics["maker_1"]["realized_pnl"] == pytest.approx(0.0)
     assert metrics["maker_1"]["unrealized_pnl"] == pytest.approx(0.0)
+    assert metrics["maker_1"]["peak_equity"] >= 0.0
+    assert metrics["maker_1"]["max_equity_drawdown"] >= 0.0
+    assert metrics["maker_1"]["max_abs_inventory"] >= 0.0
     assert metrics["maker_1"]["open_orders"] == 2
     assert metrics["taker_1"]["realized_pnl"] == pytest.approx(0.0)
     assert metrics["taker_1"]["unrealized_pnl"] == pytest.approx(0.0)
     assert metrics["taker_1"]["open_orders"] == 0
+
+
+def test_build_agent_health_metrics_tracks_drawdown_and_inventory_risk() -> None:
+    events = [
+        MarketEvent(
+            sequence=1,
+            timestamp=1.0,
+            event_type=EventType.SNAPSHOT,
+            order_book=OrderBookSnapshot(
+                timestamp=1.0,
+                bids=(OrderBookLevel(99.0, 10.0),),
+                asks=(OrderBookLevel(101.0, 10.0),),
+            ),
+            payload={},
+        ),
+        MarketEvent(
+            sequence=2,
+            timestamp=2.0,
+            event_type=EventType.TRADE,
+            price=101.0,
+            quantity=1.0,
+            payload={"buy_agent_id": "rl_01", "sell_agent_id": "maker_01"},
+            order_book=OrderBookSnapshot(
+                timestamp=2.0,
+                bids=(OrderBookLevel(99.0, 10.0),),
+                asks=(OrderBookLevel(101.0, 10.0),),
+            ),
+        ),
+        MarketEvent(
+            sequence=3,
+            timestamp=3.0,
+            event_type=EventType.SNAPSHOT,
+            order_book=OrderBookSnapshot(
+                timestamp=3.0,
+                bids=(OrderBookLevel(97.0, 10.0),),
+                asks=(OrderBookLevel(98.0, 10.0),),
+            ),
+            payload={},
+        ),
+        MarketEvent(
+            sequence=4,
+            timestamp=4.0,
+            event_type=EventType.SNAPSHOT,
+            order_book=OrderBookSnapshot(
+                timestamp=4.0,
+                bids=(OrderBookLevel(105.0, 10.0),),
+                asks=(OrderBookLevel(106.0, 10.0),),
+            ),
+            payload={},
+        ),
+        MarketEvent(
+            sequence=5,
+            timestamp=5.0,
+            event_type=EventType.TRADE,
+            price=105.0,
+            quantity=1.0,
+            payload={"buy_agent_id": "maker_01", "sell_agent_id": "rl_01"},
+            order_book=OrderBookSnapshot(
+                timestamp=5.0,
+                bids=(OrderBookLevel(105.0, 10.0),),
+                asks=(OrderBookLevel(106.0, 10.0),),
+            ),
+        ),
+    ]
+    agent_configs = [
+        SimpleNamespace(agent_id="rl_01", agent_type="trend_follower", starting_cash=1_000.0, ruin_threshold=400.0),
+        SimpleNamespace(agent_id="maker_01", agent_type="market_maker", starting_cash=1_000.0, ruin_threshold=400.0),
+    ]
+
+    metrics = build_agent_health_metrics(
+        events,
+        agent_configs,
+        starting_midpoint=100.0,
+        final_mark_price=105.0,
+        starting_inventory_overrides={"rl_01": 0.0, "maker_01": 1.0},
+        starting_cash_overrides={"rl_01": 1_000.0, "maker_01": 1_000.0},
+    )
+
+    rl_01 = metrics["rl_01"]
+    assert rl_01["realized_pnl"] == pytest.approx(4.0)
+    assert rl_01["unrealized_pnl"] == pytest.approx(0.0)
+    assert rl_01["peak_equity"] == pytest.approx(1_004.0)
+    assert rl_01["max_equity_drawdown"] == pytest.approx(4.0)
+    assert rl_01["max_equity_drawdown_pct"] == pytest.approx(4.0 / 1_000.0)
+    assert rl_01["max_equity_drawdown_from_start_replay"] == pytest.approx(4.0)
+    assert rl_01["min_equity_delta"] == pytest.approx(-4.0)
+    assert rl_01["peak_total_pnl"] == pytest.approx(4.0)
+    assert rl_01["max_pnl_drawdown"] == pytest.approx(4.0)
+    assert rl_01["max_pnl_drawdown_from_start"] == pytest.approx(4.0)
+    assert rl_01["max_inventory"] == pytest.approx(1.0)
+    assert rl_01["min_inventory"] == pytest.approx(0.0)
+    assert rl_01["max_abs_inventory"] == pytest.approx(1.0)
 
 
 def test_build_portfolio_health_rows_respects_runtime_starting_inventory_override() -> None:
@@ -227,6 +322,53 @@ def test_build_portfolio_health_rows_respects_runtime_starting_inventory_overrid
     assert rows[0].total_pnl == pytest.approx(200.0)
 
 
+def test_build_portfolio_health_rows_carries_risk_metrics() -> None:
+    rows = build_portfolio_health_rows(
+        {
+            "rl_01": {
+                "starting_cash": 10_000.0,
+                "starting_inventory": 0.0,
+                "cash": 10_100.0,
+                "inventory": 1.0,
+                "equity": 10_200.0,
+                "free_equity": 10_180.0,
+                "status": "active",
+            }
+        },
+        [SimpleNamespace(agent_id="rl_01", agent_type="trend_follower", starting_cash=10_000.0, ruin_threshold=4_000.0)],
+        starting_midpoint=100.0,
+        agent_metrics={
+            "rl_01": {
+                "peak_equity": 10_250.0,
+                "max_equity_drawdown": 75.0,
+                "max_equity_drawdown_pct": 0.00731707317,
+                "max_equity_drawdown_from_start_replay": 20.0,
+                "min_equity_delta": -20.0,
+                "peak_total_pnl": 250.0,
+                "max_pnl_drawdown": 80.0,
+                "max_pnl_drawdown_from_start": 14.0,
+                "max_inventory": 3.0,
+                "min_inventory": 0.0,
+                "max_abs_inventory": 3.0,
+            }
+        },
+        starting_inventory_overrides={"rl_01": 0.0},
+    )
+
+    row = rows[0]
+    assert row.peak_equity == pytest.approx(10_250.0)
+    assert row.max_equity_drawdown == pytest.approx(75.0)
+    assert row.max_equity_drawdown_pct == pytest.approx(0.00731707317)
+    assert row.max_equity_drawdown_from_start_replay == pytest.approx(20.0)
+    assert row.min_equity_delta == pytest.approx(-20.0)
+    assert row.peak_total_pnl == pytest.approx(250.0)
+    assert row.max_pnl_drawdown == pytest.approx(80.0)
+    assert row.max_pnl_drawdown_from_start == pytest.approx(14.0)
+    assert row.max_inventory == pytest.approx(3.0)
+    assert row.min_inventory == pytest.approx(0.0)
+    assert row.max_abs_inventory == pytest.approx(3.0)
+
+
 def test_format_portfolio_health_breakdown_is_readable() -> None:
     rows = [
         build_portfolio_health_rows(
@@ -250,4 +392,10 @@ def test_format_portfolio_health_breakdown_is_readable() -> None:
     assert "retail_01" in report
     assert "cash 10000.00 -> 10968.88" in report
     assert "inventory 20.00 -> 10.00" in report
+    assert "peak equity" in report
+    assert "max drawdown" in report
+    assert "max equity drawdown from start (replay)" in report
+    assert "min equity delta" in report
+    assert "max pnl drawdown from start" in report
+    assert "max |inventory|" in report
     assert "open orders n/a" in report

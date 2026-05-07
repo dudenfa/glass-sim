@@ -224,6 +224,13 @@ def test_build_rl_evaluation_payload_matches_market_health_shape(tmp_path: Path)
     assert payload["summary"]["trade_count"] >= 0
     assert isinstance(payload["portfolio_breakdown"], list)
     assert payload["agents"] == payload["portfolio_breakdown"]
+    first_agent = payload["portfolio_breakdown"][0]
+    assert "peak_equity" in first_agent
+    assert "max_equity_drawdown" in first_agent
+    assert "max_equity_drawdown_from_start_replay" in first_agent
+    assert "min_equity_delta" in first_agent
+    assert "max_pnl_drawdown_from_start" in first_agent
+    assert "max_abs_inventory" in first_agent
 
 
 def test_build_rl_evaluation_payload_adjusts_learning_slot_starting_inventory(tmp_path: Path) -> None:
@@ -336,9 +343,21 @@ def test_build_rl_evaluation_payload_adjusts_frozen_and_learning_runtime_startin
     assert rl_01["starting_inventory"] == 0.0
     assert rl_01["starting_equity"] == 10000.0
     assert rl_01["total_pnl"] == pytest.approx(rl_01["realized_pnl"] + rl_01["unrealized_pnl"])
+    assert "peak_equity" in rl_01
+    assert "max_equity_drawdown" in rl_01
+    assert "max_equity_drawdown_from_start_replay" in rl_01
+    assert "min_equity_delta" in rl_01
+    assert "max_pnl_drawdown_from_start" in rl_01
+    assert "max_abs_inventory" in rl_01
     assert rl_02["starting_inventory"] == 0.0
     assert rl_02["starting_equity"] == 10000.0
     assert rl_02["total_pnl"] == pytest.approx(rl_02["realized_pnl"] + rl_02["unrealized_pnl"])
+    assert "peak_equity" in rl_02
+    assert "max_equity_drawdown" in rl_02
+    assert "max_equity_drawdown_from_start_replay" in rl_02
+    assert "min_equity_delta" in rl_02
+    assert "max_pnl_drawdown_from_start" in rl_02
+    assert "max_abs_inventory" in rl_02
 
 
 def test_build_eval_config_can_add_learning_agent() -> None:

@@ -60,8 +60,15 @@ def test_build_market_health_report_can_include_portfolio_breakdown() -> None:
     assert first_row.starting_cash >= 0
     assert first_row.ending_cash >= 0
     assert first_row.starting_free_equity is not None
+    assert first_row.peak_equity is not None
+    assert first_row.max_equity_drawdown is not None
+    assert first_row.max_equity_drawdown_from_start_replay is not None
+    assert first_row.min_equity_delta is not None
+    assert first_row.max_pnl_drawdown_from_start is not None
+    assert first_row.max_abs_inventory is not None
     assert "portfolio_breakdown:" in payload["report"]
     assert "open orders" in payload["report"]
+    assert "peak equity" in payload["report"]
 
 
 def test_build_market_health_report_can_include_portfolio_breakdown() -> None:
@@ -74,3 +81,9 @@ def test_build_market_health_report_can_include_portfolio_breakdown() -> None:
     assert "agent_id" in first_row
     assert "starting_cash" in first_row
     assert "ending_equity" in first_row
+    assert "peak_equity" in first_row
+    assert "max_equity_drawdown" in first_row
+    assert "max_equity_drawdown_from_start_replay" in first_row
+    assert "min_equity_delta" in first_row
+    assert "max_pnl_drawdown_from_start" in first_row
+    assert "max_abs_inventory" in first_row

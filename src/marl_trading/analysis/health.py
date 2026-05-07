@@ -55,6 +55,17 @@ class PortfolioHealthRow:
     total_pnl: float
     realized_pnl: float | None = None
     unrealized_pnl: float | None = None
+    peak_equity: float | None = None
+    max_equity_drawdown: float | None = None
+    max_equity_drawdown_pct: float | None = None
+    max_equity_drawdown_from_start_replay: float | None = None
+    min_equity_delta: float | None = None
+    peak_total_pnl: float | None = None
+    max_pnl_drawdown: float | None = None
+    max_pnl_drawdown_from_start: float | None = None
+    max_inventory: float | None = None
+    min_inventory: float | None = None
+    max_abs_inventory: float | None = None
     open_orders: int | None = None
     ruin_threshold: float | None = None
     deactivated_reason: str | None = None
@@ -69,9 +80,21 @@ class _PnlTracker:
     starting_cash: float
     starting_inventory: float
     starting_midpoint: float
+    cash: float
     inventory: float
     cost_basis: float
     realized_pnl: float = 0.0
+    peak_equity: float = 0.0
+    max_equity_drawdown: float = 0.0
+    max_equity_drawdown_pct: float = 0.0
+    max_equity_drawdown_from_start_replay: float = 0.0
+    min_equity_delta: float = 0.0
+    peak_total_pnl: float = 0.0
+    max_pnl_drawdown: float = 0.0
+    max_pnl_drawdown_from_start: float = 0.0
+    max_inventory: float = 0.0
+    min_inventory: float = 0.0
+    max_abs_inventory: float = 0.0
 
 
 def _format_metric(value: float | int | None, digits: int = 2) -> str:
@@ -164,6 +187,12 @@ def format_portfolio_health_breakdown(rows: Sequence[PortfolioHealthRow]) -> str
                 f"free equity {free_equity_text}; "
                 f"realized {_format_metric(row.realized_pnl, 2) if row.realized_pnl is not None else 'n/a'}; "
                 f"unrealized {_format_metric(row.unrealized_pnl, 2) if row.unrealized_pnl is not None else 'n/a'}; "
+                f"peak equity {_format_metric(row.peak_equity, 2) if row.peak_equity is not None else 'n/a'}; "
+                f"max drawdown {_format_metric(row.max_equity_drawdown, 2) if row.max_equity_drawdown is not None else 'n/a'}; "
+                f"max equity drawdown from start (replay) {_format_metric(row.max_equity_drawdown_from_start_replay, 2) if row.max_equity_drawdown_from_start_replay is not None else 'n/a'}; "
+                f"min equity delta {_format_metric(row.min_equity_delta, 2) if row.min_equity_delta is not None else 'n/a'}; "
+                f"max pnl drawdown from start {_format_metric(row.max_pnl_drawdown_from_start, 2) if row.max_pnl_drawdown_from_start is not None else 'n/a'}; "
+                f"max |inventory| {_format_metric(row.max_abs_inventory, 0) if row.max_abs_inventory is not None else 'n/a'}; "
                 f"open orders {_format_optional_int(row.open_orders)}"
             )
         )
@@ -294,6 +323,61 @@ def _agent_id_text(value: Any) -> str:
     return str(raw)
 
 
+def _mark_price_for_inventory(
+    inventory: float,
+    order_book: OrderBookSnapshot | None,
+    *,
+    last_trade_price: float | None,
+    fallback_mark_price: float,
+) -> float:
+    if order_book is not None:
+        best_bid = order_book.best_bid()
+        best_ask = order_book.best_ask()
+        midpoint = order_book.midpoint()
+        if inventory > 1e-12 and best_bid is not None:
+            return float(best_bid)
+        if inventory < -1e-12 and best_ask is not None:
+            return float(best_ask)
+        if midpoint is not None:
+            return float(midpoint)
+        if best_bid is not None:
+            return float(best_bid)
+        if best_ask is not None:
+            return float(best_ask)
+    if last_trade_price is not None:
+        return float(last_trade_price)
+    return float(fallback_mark_price)
+
+
+def _observe_tracker_state(tracker: _PnlTracker, *, mark_price: float) -> None:
+    starting_equity = tracker.starting_cash + tracker.starting_inventory * tracker.starting_midpoint
+    equity = tracker.cash + tracker.inventory * mark_price
+    unrealized_pnl = tracker.inventory * mark_price - tracker.cost_basis
+    total_pnl = tracker.realized_pnl + unrealized_pnl
+    equity_delta = equity - starting_equity
+
+    tracker.peak_equity = max(tracker.peak_equity, equity)
+    tracker.max_equity_drawdown_from_start_replay = max(
+        tracker.max_equity_drawdown_from_start_replay,
+        max(0.0, starting_equity - equity),
+    )
+    tracker.min_equity_delta = min(tracker.min_equity_delta, equity_delta)
+    equity_drawdown = tracker.peak_equity - equity
+    tracker.max_equity_drawdown = max(tracker.max_equity_drawdown, equity_drawdown)
+    if tracker.peak_equity > 1e-12:
+        tracker.max_equity_drawdown_pct = max(
+            tracker.max_equity_drawdown_pct,
+            equity_drawdown / tracker.peak_equity,
+        )
+
+    tracker.peak_total_pnl = max(tracker.peak_total_pnl, total_pnl)
+    tracker.max_pnl_drawdown = max(tracker.max_pnl_drawdown, tracker.peak_total_pnl - total_pnl)
+    tracker.max_pnl_drawdown_from_start = max(tracker.max_pnl_drawdown_from_start, max(0.0, -total_pnl))
+    tracker.max_inventory = max(tracker.max_inventory, tracker.inventory)
+    tracker.min_inventory = min(tracker.min_inventory, tracker.inventory)
+    tracker.max_abs_inventory = max(tracker.max_abs_inventory, abs(tracker.inventory))
+
+
 def build_portfolio_health_rows(
     final_portfolios: Mapping[str, Mapping[str, Any]],
     agent_configs: Sequence[Any],
@@ -372,6 +456,23 @@ def build_portfolio_health_rows(
                 total_pnl=ending_equity - starting_equity,
                 realized_pnl=extra_metrics.get("realized_pnl", final_summary.get("realized_pnl")),
                 unrealized_pnl=extra_metrics.get("unrealized_pnl", final_summary.get("unrealized_pnl")),
+                peak_equity=extra_metrics.get("peak_equity", final_summary.get("peak_equity")),
+                max_equity_drawdown=extra_metrics.get("max_equity_drawdown", final_summary.get("max_equity_drawdown")),
+                max_equity_drawdown_pct=extra_metrics.get("max_equity_drawdown_pct", final_summary.get("max_equity_drawdown_pct")),
+                max_equity_drawdown_from_start_replay=extra_metrics.get(
+                    "max_equity_drawdown_from_start_replay",
+                    final_summary.get("max_equity_drawdown_from_start_replay"),
+                ),
+                min_equity_delta=extra_metrics.get("min_equity_delta", final_summary.get("min_equity_delta")),
+                peak_total_pnl=extra_metrics.get("peak_total_pnl", final_summary.get("peak_total_pnl")),
+                max_pnl_drawdown=extra_metrics.get("max_pnl_drawdown", final_summary.get("max_pnl_drawdown")),
+                max_pnl_drawdown_from_start=extra_metrics.get(
+                    "max_pnl_drawdown_from_start",
+                    final_summary.get("max_pnl_drawdown_from_start"),
+                ),
+                max_inventory=extra_metrics.get("max_inventory", final_summary.get("max_inventory")),
+                min_inventory=extra_metrics.get("min_inventory", final_summary.get("min_inventory")),
+                max_abs_inventory=extra_metrics.get("max_abs_inventory", final_summary.get("max_abs_inventory")),
                 open_orders=extra_metrics.get("open_orders", final_summary.get("open_orders")),
                 ruin_threshold=float(ruin_threshold) if ruin_threshold is not None else None,
                 deactivated_reason=final_summary.get("deactivated_reason"),
@@ -421,43 +522,64 @@ def build_agent_health_metrics(
             starting_cash=starting_cash,
             starting_inventory=starting_inventory,
             starting_midpoint=float(starting_midpoint),
+            cash=starting_cash,
             inventory=starting_inventory,
             cost_basis=starting_inventory * float(starting_midpoint),
+            peak_equity=starting_cash + starting_inventory * float(starting_midpoint),
+            peak_total_pnl=0.0,
+            max_inventory=starting_inventory,
+            min_inventory=starting_inventory,
+            max_abs_inventory=abs(starting_inventory),
         )
 
+    last_trade_price: float | None = None
     for event in events:
         event_type = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
-        if event_type != EventType.TRADE.value:
-            continue
-        payload = dict(event.payload)
-        buy_agent_id = payload.get("buy_agent_id")
-        sell_agent_id = payload.get("sell_agent_id")
-        if buy_agent_id is None or sell_agent_id is None or event.price is None or event.quantity is None:
-            continue
-        price = float(event.price)
-        quantity = float(event.quantity)
-        buy_key = _agent_id_text(buy_agent_id)
-        sell_key = _agent_id_text(sell_agent_id)
+        if event_type == EventType.TRADE.value:
+            payload = dict(event.payload)
+            buy_agent_id = payload.get("buy_agent_id")
+            sell_agent_id = payload.get("sell_agent_id")
+            if buy_agent_id is not None and sell_agent_id is not None and event.price is not None and event.quantity is not None:
+                price = float(event.price)
+                quantity = float(event.quantity)
+                last_trade_price = price
+                buy_key = _agent_id_text(buy_agent_id)
+                sell_key = _agent_id_text(sell_agent_id)
 
-        for agent_key in (buy_key, sell_key):
-            if agent_key not in trackers:
-                trackers[agent_key] = _PnlTracker(
-                    starting_cash=0.0,
-                    starting_inventory=0.0,
-                    starting_midpoint=float(starting_midpoint),
-                    inventory=0.0,
-                    cost_basis=0.0,
-                )
+                for agent_key in (buy_key, sell_key):
+                    if agent_key not in trackers:
+                        trackers[agent_key] = _PnlTracker(
+                            starting_cash=0.0,
+                            starting_inventory=0.0,
+                            starting_midpoint=float(starting_midpoint),
+                            cash=0.0,
+                            inventory=0.0,
+                            cost_basis=0.0,
+                        )
 
-        buyer = trackers[buy_key]
-        seller = trackers[sell_key]
-        buyer.inventory += quantity
-        buyer.cost_basis += quantity * price
+                buyer = trackers[buy_key]
+                seller = trackers[sell_key]
+                buyer.cash -= quantity * price
+                buyer.inventory += quantity
+                buyer.cost_basis += quantity * price
 
-        average_cost = seller.cost_basis / seller.inventory if seller.inventory > 1e-12 else price
-        seller.realized_pnl += quantity * (price - average_cost)
-        seller.cost_basis = max(seller.cost_basis - average_cost * quantity, 0.0)
-        seller.inventory = max(seller.inventory - quantity, 0.0)
+                average_cost = seller.cost_basis / seller.inventory if seller.inventory > 1e-12 else price
+                seller.cash += quantity * price
+                seller.realized_pnl += quantity * (price - average_cost)
+                seller.cost_basis = max(seller.cost_basis - average_cost * quantity, 0.0)
+                seller.inventory = max(seller.inventory - quantity, 0.0)
+
+        mark_fallback = last_trade_price if last_trade_price is not None else float(starting_midpoint)
+        for tracker in trackers.values():
+            _observe_tracker_state(
+                tracker,
+                mark_price=_mark_price_for_inventory(
+                    tracker.inventory,
+                    event.order_book,
+                    last_trade_price=last_trade_price,
+                    fallback_mark_price=mark_fallback,
+                ),
+            )
 
     metrics: dict[str, dict[str, Any]] = {}
     for agent_id, tracker in trackers.items():
@@ -469,6 +591,7 @@ def build_agent_health_metrics(
             if ending_cash is not None and ending_equity is not None:
                 portfolio_mark_price = (float(ending_equity) - float(ending_cash)) / float(tracker.inventory)
         agent_final_mark_price = float(portfolio_mark_price) if portfolio_mark_price is not None else float(final_mark_price)
+        _observe_tracker_state(tracker, mark_price=agent_final_mark_price)
         unrealized_pnl = tracker.inventory * agent_final_mark_price - tracker.cost_basis
         agent_cfg = config_by_id.get(agent_id)
         metrics[agent_id] = {
@@ -476,6 +599,17 @@ def build_agent_health_metrics(
             "realized_pnl": float(tracker.realized_pnl),
             "unrealized_pnl": float(unrealized_pnl),
             "total_pnl": float(tracker.realized_pnl + unrealized_pnl),
+            "peak_equity": float(tracker.peak_equity),
+            "max_equity_drawdown": float(tracker.max_equity_drawdown),
+            "max_equity_drawdown_pct": float(tracker.max_equity_drawdown_pct),
+            "max_equity_drawdown_from_start_replay": float(tracker.max_equity_drawdown_from_start_replay),
+            "min_equity_delta": float(tracker.min_equity_delta),
+            "peak_total_pnl": float(tracker.peak_total_pnl),
+            "max_pnl_drawdown": float(tracker.max_pnl_drawdown),
+            "max_pnl_drawdown_from_start": float(tracker.max_pnl_drawdown_from_start),
+            "max_inventory": float(tracker.max_inventory),
+            "min_inventory": float(tracker.min_inventory),
+            "max_abs_inventory": float(tracker.max_abs_inventory),
             "open_orders": int((open_orders_by_agent or {}).get(agent_id, 0)),
             "ruin_threshold": getattr(agent_cfg, "ruin_threshold", None),
         }

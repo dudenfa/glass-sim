@@ -53,6 +53,16 @@ def test_compare_market_runs_from_payloads_includes_summary_and_agents() -> None
                 "inventory": 2,
                 "realized_pnl": 20.0,
                 "unrealized_pnl": 5.0,
+                "peak_equity": 515.0,
+                "max_equity_drawdown": 25.0,
+                "peak_total_pnl": 30.0,
+                "max_equity_drawdown_from_start_replay": 8.0,
+                "min_equity_delta": -8.0,
+                "max_pnl_drawdown": 12.0,
+                "max_pnl_drawdown_from_start": 4.0,
+                "max_inventory": 4,
+                "min_inventory": 1,
+                "max_abs_inventory": 4,
                 "open_orders": 2,
             },
             "trend_01": {
@@ -80,6 +90,16 @@ def test_compare_market_runs_from_payloads_includes_summary_and_agents() -> None
                 "inventory": 3,
                 "realized_pnl": 25.0,
                 "unrealized_pnl": 7.0,
+                "peak_equity": 540.0,
+                "max_equity_drawdown": 18.0,
+                "peak_total_pnl": 38.0,
+                "max_equity_drawdown_from_start_replay": 5.0,
+                "min_equity_delta": -5.0,
+                "max_pnl_drawdown": 8.0,
+                "max_pnl_drawdown_from_start": 2.0,
+                "max_inventory": 5,
+                "min_inventory": 1,
+                "max_abs_inventory": 5,
                 "open_orders": 1,
             },
             "rl_01": {
@@ -111,7 +131,15 @@ def test_compare_market_runs_from_payloads_includes_summary_and_agents() -> None
     assert shared.left_present is True
     assert shared.right_present is True
     equity_row = next(metric for metric in shared.metrics if metric.key == "equity")
+    drawdown_row = next(metric for metric in shared.metrics if metric.key == "max_equity_drawdown")
+    start_drawdown_row = next(
+        metric for metric in shared.metrics if metric.key == "max_equity_drawdown_from_start_replay"
+    )
+    min_equity_delta_row = next(metric for metric in shared.metrics if metric.key == "min_equity_delta")
     assert equity_row.delta == 30.0
+    assert drawdown_row.delta == -7.0
+    assert start_drawdown_row.delta == -3.0
+    assert min_equity_delta_row.delta == 3.0
 
     formatted = format_market_run_comparison(comparison)
     assert "Summary metrics" in formatted
@@ -120,6 +148,10 @@ def test_compare_market_runs_from_payloads_includes_summary_and_agents() -> None
     assert "right-only ids: rl_01" in formatted
     assert "### maker_01 (shared, type=market_maker)" in formatted
     assert "### rl_01 (right-only, type=rl_agent)" in formatted
+    assert "Max Drawdown" in formatted
+    assert "Max Equity Drawdown From Start Replay" in formatted
+    assert "Max PnL Drawdown From Start" in formatted
+    assert "Max |Inventory|" in formatted
 
 
 def test_load_market_run_from_json_file(tmp_path) -> None:
@@ -195,6 +227,17 @@ def test_compare_market_runs_accepts_direct_portfolio_breakdown_rows() -> None:
                 total_pnl=20.0,
                 realized_pnl=15.0,
                 unrealized_pnl=5.0,
+                peak_equity=525.0,
+                max_equity_drawdown=30.0,
+                max_equity_drawdown_pct=0.0571,
+                max_equity_drawdown_from_start_replay=18.0,
+                min_equity_delta=-18.0,
+                peak_total_pnl=35.0,
+                max_pnl_drawdown=12.0,
+                max_pnl_drawdown_from_start=7.0,
+                max_inventory=5.0,
+                min_inventory=3.0,
+                max_abs_inventory=5.0,
                 open_orders=1,
             )
         ],
@@ -224,6 +267,17 @@ def test_compare_market_runs_accepts_direct_portfolio_breakdown_rows() -> None:
                 total_pnl=30.0,
                 realized_pnl=22.0,
                 unrealized_pnl=8.0,
+                peak_equity=540.0,
+                max_equity_drawdown=20.0,
+                max_equity_drawdown_pct=0.0370,
+                max_equity_drawdown_from_start_replay=10.0,
+                min_equity_delta=-10.0,
+                peak_total_pnl=45.0,
+                max_pnl_drawdown=8.0,
+                max_pnl_drawdown_from_start=4.0,
+                max_inventory=6.0,
+                min_inventory=2.0,
+                max_abs_inventory=6.0,
                 open_orders=2,
             )
         ],
@@ -235,5 +289,7 @@ def test_compare_market_runs_accepts_direct_portfolio_breakdown_rows() -> None:
     shared = comparison.agent_comparisons[0]
     equity_row = next(metric for metric in shared.metrics if metric.key == "equity")
     inventory_row = next(metric for metric in shared.metrics if metric.key == "inventory")
+    peak_equity_row = next(metric for metric in shared.metrics if metric.key == "peak_equity")
     assert equity_row.delta == 10.0
     assert inventory_row.delta == -1.0
+    assert peak_equity_row.delta == 15.0
