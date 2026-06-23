@@ -120,6 +120,8 @@ class SyntheticMarketSimulator:
 
     def _reset_runtime_state(self) -> None:
         self.rng = np.random.default_rng(self._runtime_seed)
+        # Keep the public market path fixed when agent configurations consume a different number of policy RNG draws.
+        self.exogenous_rng = np.random.default_rng(np.random.SeedSequence([self._runtime_seed, 1]))
         self.exchange = ExchangeKernel()
         self.portfolios = PortfolioManager()
         self.agents = {}
@@ -769,7 +771,7 @@ class SyntheticMarketSimulator:
 
         step_index = self._current_step_index + 1
         timestamp_ns = step_index
-        news = self.news_process.maybe_emit(step_index, self.rng)
+        news = self.news_process.maybe_emit(step_index, self.exogenous_rng)
         news_event: NewsEvent | None = news
         if news_event is not None:
             self.recent_news = (news_event.headline, news_event.severity)
@@ -784,7 +786,7 @@ class SyntheticMarketSimulator:
                 order_book=self._current_book_snapshot(timestamp_ns),
             )
 
-        self.fundamental.advance(self.rng, news_impact=0.0 if news_event is None else news_event.impact)
+        self.fundamental.advance(self.exogenous_rng, news_impact=0.0 if news_event is None else news_event.impact)
         snapshot = self._current_book_snapshot(timestamp_ns)
         active_ids = [agent_id for agent_id, portfolio in self.portfolios.portfolios.items() if portfolio.active]
         if not active_ids:

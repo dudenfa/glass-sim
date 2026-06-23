@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from marl_trading.agents.base import MarketObservation, OrderIntent, ScriptedAgent
 from marl_trading.analysis import EventLog, EventType, OrderBookLevel, OrderBookSnapshot, summarize_event_log
+from marl_trading.core.config import AgentConfig
+from marl_trading.core.domain import AgentId
 from marl_trading.configs.defaults import default_simulation_config
 from marl_trading.exchange.models import OrderType, Side
 from marl_trading.market import SyntheticMarketSimulator
@@ -26,6 +30,29 @@ def test_synthetic_market_demo_is_deterministic_and_generates_activity() -> None
     summary = summarize_event_log(result1.event_log)
     assert summary["has_order_book_snapshots"] is True
     assert summary["news_count"] == result1.summary["news_count"]
+
+
+def test_exogenous_path_is_fixed_when_agent_configuration_changes() -> None:
+    config = default_simulation_config()
+    extra_noise_agent = AgentConfig(
+        agent_id=AgentId("retail_02"),
+        agent_type="noise_trader",
+        starting_cash=10_000.0,
+        ruin_threshold=4_000.0,
+        max_resting_orders=2,
+    )
+    expanded_config = replace(config, agents=(*config.agents, extra_noise_agent))
+
+    baseline = SyntheticMarketSimulator(config, horizon=120).run(horizon=120)
+    expanded = SyntheticMarketSimulator(expanded_config, horizon=120).run(horizon=120)
+
+    assert baseline.final_fundamental == pytest.approx(expanded.final_fundamental)
+    assert [record.fundamental for record in baseline.step_records] == pytest.approx(
+        [record.fundamental for record in expanded.step_records]
+    )
+    assert [event.payload for event in baseline.event_log.news_events()] == [
+        event.payload for event in expanded.event_log.news_events()
+    ]
 
 
 def test_synthetic_market_event_log_uses_replay_contract() -> None:
