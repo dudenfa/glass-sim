@@ -16,6 +16,7 @@ def test_parse_args_defaults_to_trend_slot() -> None:
     assert args.add_learning_agent is False
     assert args.learning_agent_template_id is None
     assert args.learning_agent_starting_inventory == 0.0
+    assert args.exclude_agent == []
     assert args.frozen_agent_checkpoint is None
     assert args.frozen_agent_id is None
     assert args.add_frozen_agent is False
@@ -118,6 +119,12 @@ def test_parse_args_accepts_add_learning_agent_mode() -> None:
     assert args.learning_agent_id == "rl_01"
     assert args.add_learning_agent is True
     assert args.learning_agent_template_id == "trend_01"
+
+
+def test_parse_args_accepts_excluded_agent() -> None:
+    args = train_rl_agent.parse_args(["--total-timesteps", "128", "--exclude-agent", "informed_01"])
+
+    assert args.exclude_agent == ["informed_01"]
 
 
 def test_parse_args_accepts_frozen_agent_mode() -> None:

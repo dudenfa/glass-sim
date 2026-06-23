@@ -26,3 +26,19 @@ def test_three_rl_structure_uses_both_endowed_frozen_opponents() -> None:
     assert len(frozen_specs) == 2
     assert frozen_specs[0].startswith("rl_01:") and frozen_specs[0].endswith(":trend_01:16.0")
     assert frozen_specs[1].startswith("rl_02:") and frozen_specs[1].endswith(":trend_01:16.0")
+
+
+def test_panel_command_propagates_excluded_agent() -> None:
+    spec = next(item for item in panel.STRUCTURES if item.structure_id == "s1_rl01")
+
+    argv = panel._eval_argv(
+        spec,
+        seed=31,
+        horizon=100,
+        preset="baseline",
+        rl_inventory=16.0,
+        excluded_agent_ids=("informed_01",),
+        preserve_excluded_turn_slots=True,
+    )
+
+    assert argv[-3:] == ["--exclude-agent", "informed_01", "--preserve-excluded-turn-slots"]

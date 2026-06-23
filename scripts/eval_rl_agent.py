@@ -18,6 +18,7 @@ from marl_trading.core.config import SimulationConfig
 from marl_trading.rl.scenario import (
     FrozenAgentSpec,
     build_frozen_agent_specs,
+    exclude_agents_from_config,
     prepare_frozen_agent_config,
     prepare_frozen_agent_configs,
     prepare_learning_agent_config,
@@ -55,6 +56,18 @@ def build_parser() -> argparse.ArgumentParser:
         choices=available_preset_names(),
         default="baseline",
         help="Named preset used for evaluation.",
+    )
+    parser.add_argument(
+        "--exclude-agent",
+        action="append",
+        default=[],
+        metavar="AGENT_ID",
+        help="Remove a scripted participant from the base preset before adding runtime RL agents.",
+    )
+    parser.add_argument(
+        "--preserve-excluded-turn-slots",
+        action="store_true",
+        help="Keep excluded participants' scheduled turns as no-ops so surviving agents do not receive extra actions.",
     )
     parser.add_argument(
         "--learning-agent-id",
@@ -278,6 +291,8 @@ def build_eval_config(
     learning_agent_id: str = "trend_01",
     add_learning_agent: bool = False,
     learning_agent_template_id: str | None = None,
+    excluded_agent_ids: tuple[str, ...] = (),
+    preserve_excluded_turn_slots: bool = False,
     frozen_agents: tuple[FrozenAgentSpec, ...] = (),
     frozen_agent_id: str | None = None,
     add_frozen_agent: bool = False,
@@ -286,6 +301,11 @@ def build_eval_config(
     config = build_preset_config(preset_name)
     if seed is not None:
         config = replace(config, seed=int(seed))
+    config = exclude_agents_from_config(
+        config,
+        excluded_agent_ids=excluded_agent_ids,
+        preserve_excluded_turn_slots=preserve_excluded_turn_slots,
+    )
     if frozen_agents:
         config = prepare_frozen_agent_configs(config, frozen_agents=frozen_agents)
     elif frozen_agent_id is not None:
@@ -352,6 +372,8 @@ def build_rl_evaluation_payload(
     add_learning_agent: bool,
     learning_agent_template_id: str | None,
     learning_agent_starting_inventory: float,
+    excluded_agent_ids: tuple[str, ...] = (),
+    preserve_excluded_turn_slots: bool = False,
     frozen_agent_checkpoint: Path | None,
     frozen_agent_id: str | None,
     add_frozen_agent: bool,
@@ -443,6 +465,8 @@ def build_rl_evaluation_payload(
             "learning_agent_id": str(learning_agent_id),
             "add_learning_agent": bool(add_learning_agent),
             "learning_agent_template_id": None if learning_agent_template_id is None else str(learning_agent_template_id),
+            "excluded_agent_ids": list(excluded_agent_ids),
+            "preserve_excluded_turn_slots": bool(preserve_excluded_turn_slots),
             "learning_agent_starting_inventory": float(learning_agent_starting_inventory),
             "frozen_agent_checkpoint": None if frozen_agent_checkpoint is None else str(frozen_agent_checkpoint.resolve()),
             "frozen_agent_id": None if frozen_agent_id is None else str(frozen_agent_id),
@@ -515,6 +539,8 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         learning_agent_id=str(args.learning_agent_id),
         add_learning_agent=bool(args.add_learning_agent),
         learning_agent_template_id=None if args.learning_agent_template_id is None else str(args.learning_agent_template_id),
+        excluded_agent_ids=tuple(args.exclude_agent or ()),
+        preserve_excluded_turn_slots=bool(args.preserve_excluded_turn_slots),
         frozen_agents=frozen_agent_specs,
     )
     use_legacy_frozen_env = not bool(args.frozen_agent) and args.frozen_agent_checkpoint is not None
@@ -569,6 +595,8 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         add_learning_agent=bool(args.add_learning_agent),
         learning_agent_template_id=None if args.learning_agent_template_id is None else str(args.learning_agent_template_id),
         learning_agent_starting_inventory=float(args.learning_agent_starting_inventory),
+        excluded_agent_ids=tuple(args.exclude_agent or ()),
+        preserve_excluded_turn_slots=bool(args.preserve_excluded_turn_slots),
         frozen_agent_checkpoint=None if args.frozen_agent_checkpoint is None else Path(args.frozen_agent_checkpoint),
         frozen_agent_id=None if args.frozen_agent_id is None else str(args.frozen_agent_id),
         add_frozen_agent=bool(args.add_frozen_agent),

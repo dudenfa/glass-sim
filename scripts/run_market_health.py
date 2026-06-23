@@ -23,6 +23,7 @@ from marl_trading.analysis import (
 )
 from marl_trading.configs import available_preset_names, get_preset
 from marl_trading.market import SyntheticMarketSimulator
+from marl_trading.rl.scenario import exclude_agents_from_config
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,6 +36,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=None, help="Override the preset seed.")
     parser.add_argument("--horizon", type=int, default=None, help="Override the preset event horizon.")
+    parser.add_argument(
+        "--exclude-agent",
+        action="append",
+        default=[],
+        metavar="AGENT_ID",
+        help="Remove a scripted participant from the base preset before running the market.",
+    )
+    parser.add_argument(
+        "--preserve-excluded-turn-slots",
+        action="store_true",
+        help="Keep excluded participants' scheduled turns as no-ops so surviving agents do not receive extra actions.",
+    )
     parser.add_argument("--output", type=Path, default=None, help="Optional file path for the report output.")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of compact text.")
     parser.add_argument(
@@ -59,12 +72,19 @@ def build_market_health_report(
     *,
     seed: int | None = None,
     horizon: int | None = None,
+    excluded_agent_ids: tuple[str, ...] = (),
+    preserve_excluded_turn_slots: bool = False,
     portfolio_breakdown: bool = False,
 ) -> dict[str, Any]:
     preset = get_preset(preset_name)
     config = preset.build()
     if seed is not None:
         config = replace(config, seed=int(seed))
+    config = exclude_agents_from_config(
+        config,
+        excluded_agent_ids=excluded_agent_ids,
+        preserve_excluded_turn_slots=preserve_excluded_turn_slots,
+    )
 
     effective_horizon = int(horizon if horizon is not None else config.market.event_horizon)
     simulator = SyntheticMarketSimulator(config, horizon=effective_horizon)
@@ -143,6 +163,8 @@ def main() -> None:
         args.preset,
         seed=args.seed,
         horizon=args.horizon,
+        excluded_agent_ids=tuple(args.exclude_agent or ()),
+        preserve_excluded_turn_slots=bool(args.preserve_excluded_turn_slots),
         portfolio_breakdown=args.portfolio_breakdown,
     )
     output = json.dumps(_serialize_report(payload), indent=2) if args.json else payload["report"]

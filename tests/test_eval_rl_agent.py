@@ -21,6 +21,8 @@ def test_parse_args_requires_checkpoint() -> None:
     assert args.add_learning_agent is False
     assert args.learning_agent_template_id is None
     assert args.learning_agent_starting_inventory == 0.0
+    assert args.exclude_agent == []
+    assert args.preserve_excluded_turn_slots is False
     assert args.frozen_agent_checkpoint is None
     assert args.frozen_agent_id is None
     assert args.add_frozen_agent is False
@@ -108,6 +110,15 @@ def test_parse_args_accepts_add_learning_agent_mode() -> None:
     assert args.learning_agent_id == "rl_01"
     assert args.add_learning_agent is True
     assert args.learning_agent_template_id == "trend_01"
+
+
+def test_parse_args_accepts_excluded_agent() -> None:
+    args = eval_rl_agent.parse_args(
+        ["--checkpoint", "model.zip", "--exclude-agent", "informed_01", "--preserve-excluded-turn-slots"]
+    )
+
+    assert args.exclude_agent == ["informed_01"]
+    assert args.preserve_excluded_turn_slots is True
 
 
 def test_parse_args_accepts_frozen_agent_mode() -> None:
@@ -391,6 +402,28 @@ def test_build_eval_config_can_add_learning_agent() -> None:
     assert horizon == config.market.event_horizon
     agent_ids = [agent.agent_id.value for agent in config.agents]
     assert agent_ids == ["maker_01", "retail_01", "informed_01", "trend_01", "rl_01"]
+
+
+def test_build_eval_config_can_exclude_informed_agent_before_adding_rl() -> None:
+    config, _horizon = eval_rl_agent.build_eval_config(
+        "baseline",
+        learning_agent_id="rl_01",
+        add_learning_agent=True,
+        learning_agent_template_id="trend_01",
+        excluded_agent_ids=("informed_01",),
+    )
+
+    assert [agent.agent_id.value for agent in config.agents] == ["maker_01", "retail_01", "trend_01", "rl_01"]
+
+
+def test_build_eval_config_can_preserve_an_excluded_turn_slot() -> None:
+    config, _horizon = eval_rl_agent.build_eval_config(
+        "baseline",
+        excluded_agent_ids=("informed_01",),
+        preserve_excluded_turn_slots=True,
+    )
+
+    assert config.turn_schedule_agent_ids == ("maker_01", "retail_01", "informed_01", "trend_01")
 
 
 def test_build_eval_config_can_add_learning_and_frozen_agents() -> None:

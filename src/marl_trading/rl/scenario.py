@@ -154,6 +154,30 @@ def prepare_learning_agent_config(
     )
 
 
+def exclude_agents_from_config(
+    config: SimulationConfig,
+    *,
+    excluded_agent_ids: Sequence[str] = (),
+    preserve_excluded_turn_slots: bool = False,
+) -> SimulationConfig:
+    resolved_ids = tuple(
+        dict.fromkeys(str(agent_id).strip() for agent_id in excluded_agent_ids if str(agent_id).strip())
+    )
+    if not resolved_ids:
+        return config
+    existing_ids = {agent.agent_id.value for agent in config.agents}
+    unknown_ids = sorted(set(resolved_ids) - existing_ids)
+    if unknown_ids:
+        raise KeyError(f"Unknown excluded agent id(s): {', '.join(unknown_ids)}")
+    remaining_agents = tuple(agent for agent in config.agents if agent.agent_id.value not in resolved_ids)
+    if not remaining_agents:
+        raise ValueError("Cannot exclude every participant from the simulation config.")
+    turn_schedule_agent_ids = config.turn_schedule_agent_ids
+    if preserve_excluded_turn_slots:
+        turn_schedule_agent_ids = tuple(agent.agent_id.value for agent in config.agents)
+    return replace(config, agents=remaining_agents, turn_schedule_agent_ids=turn_schedule_agent_ids)
+
+
 def prepare_frozen_agent_config(
     config: SimulationConfig,
     *,
@@ -201,7 +225,14 @@ def prepare_runtime_agent_config(
         raise KeyError(f"Unknown learning agent template id: {resolved_template_id}")
 
     runtime_agent = _clone_agent_config(template_agent, agent_id=resolved_runtime_agent_id)
-    return replace(config, agents=tuple(config.agents) + (runtime_agent,))
+    turn_schedule_agent_ids = config.turn_schedule_agent_ids
+    if turn_schedule_agent_ids is not None:
+        turn_schedule_agent_ids = (*turn_schedule_agent_ids, resolved_runtime_agent_id)
+    return replace(
+        config,
+        agents=tuple(config.agents) + (runtime_agent,),
+        turn_schedule_agent_ids=turn_schedule_agent_ids,
+    )
 
 
 def _clone_agent_config(agent: AgentConfig, *, agent_id: str) -> AgentConfig:

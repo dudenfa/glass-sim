@@ -73,6 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--horizon", type=int, default=10_000)
     parser.add_argument("--preset", default="baseline")
     parser.add_argument("--rl-inventory", type=float, default=16.0)
+    parser.add_argument("--exclude-agent", action="append", default=[], metavar="AGENT_ID")
+    parser.add_argument("--preserve-excluded-turn-slots", action="store_true")
     parser.add_argument("--skip-existing", action="store_true")
     return parser
 
@@ -84,6 +86,8 @@ def _eval_argv(
     horizon: int,
     preset: str,
     rl_inventory: float,
+    excluded_agent_ids: tuple[str, ...] = (),
+    preserve_excluded_turn_slots: bool = False,
 ) -> list[str]:
     if spec.learning_agent_id is None:
         raise ValueError("Scripted-only structure has no RL evaluation command.")
@@ -112,6 +116,10 @@ def _eval_argv(
                 f"{frozen_agent_id}:{DEFAULT_CHECKPOINTS[frozen_agent_id]}:trend_01:{rl_inventory}",
             ]
         )
+    for excluded_agent_id in excluded_agent_ids:
+        argv.extend(["--exclude-agent", excluded_agent_id])
+    if preserve_excluded_turn_slots:
+        argv.append("--preserve-excluded-turn-slots")
     return argv
 
 
@@ -122,14 +130,31 @@ def build_structure_report(
     horizon: int,
     preset: str,
     rl_inventory: float,
+    excluded_agent_ids: tuple[str, ...] = (),
+    preserve_excluded_turn_slots: bool = False,
 ) -> dict[str, Any]:
     if spec.learning_agent_id is None:
         payload = serialize_market_health_report(
-            build_market_health_report(preset, seed=seed, horizon=horizon, portfolio_breakdown=True)
+            build_market_health_report(
+                preset,
+                seed=seed,
+                horizon=horizon,
+                excluded_agent_ids=excluded_agent_ids,
+                preserve_excluded_turn_slots=preserve_excluded_turn_slots,
+                portfolio_breakdown=True,
+            )
         )
     else:
         args = eval_rl_agent.parse_args(
-            _eval_argv(spec, seed=seed, horizon=horizon, preset=preset, rl_inventory=rl_inventory)
+            _eval_argv(
+                spec,
+                seed=seed,
+                horizon=horizon,
+                preset=preset,
+                rl_inventory=rl_inventory,
+                excluded_agent_ids=excluded_agent_ids,
+                preserve_excluded_turn_slots=preserve_excluded_turn_slots,
+            )
         )
         payload = eval_rl_agent._serialize_report(eval_rl_agent.evaluate_checkpoint(args))
 
@@ -141,6 +166,8 @@ def build_structure_report(
             "ranking_rl_starting_inventory": float(rl_inventory),
             "ranking_learning_agent_id": spec.learning_agent_id,
             "ranking_frozen_agent_ids": list(spec.frozen_agent_ids),
+            "ranking_excluded_agent_ids": list(excluded_agent_ids),
+            "ranking_preserve_excluded_turn_slots": bool(preserve_excluded_turn_slots),
         }
     )
     payload["metadata"] = metadata
@@ -154,6 +181,8 @@ def run_panel(
     horizon: int,
     preset: str,
     rl_inventory: float,
+    excluded_agent_ids: tuple[str, ...] = (),
+    preserve_excluded_turn_slots: bool = False,
     skip_existing: bool = False,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -175,6 +204,8 @@ def run_panel(
                 horizon=horizon,
                 preset=preset,
                 rl_inventory=rl_inventory,
+                excluded_agent_ids=excluded_agent_ids,
+                preserve_excluded_turn_slots=preserve_excluded_turn_slots,
             )
             path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
             written.append(path)
@@ -183,6 +214,8 @@ def run_panel(
         "horizon": int(horizon),
         "seeds": list(seeds),
         "rl_starting_inventory": float(rl_inventory),
+        "excluded_agent_ids": list(excluded_agent_ids),
+        "preserve_excluded_turn_slots": bool(preserve_excluded_turn_slots),
         "structures": [
             {
                 "structure_id": spec.structure_id,
@@ -209,6 +242,8 @@ def main(argv: list[str] | None = None) -> None:
         horizon=int(args.horizon),
         preset=str(args.preset),
         rl_inventory=float(args.rl_inventory),
+        excluded_agent_ids=tuple(args.exclude_agent or ()),
+        preserve_excluded_turn_slots=bool(args.preserve_excluded_turn_slots),
         skip_existing=bool(args.skip_existing),
     )
     print(f"Wrote {len(written)} ranking reports to {args.output_dir.resolve()}")

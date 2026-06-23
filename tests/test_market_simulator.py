@@ -11,6 +11,7 @@ from marl_trading.core.domain import AgentId
 from marl_trading.configs.defaults import default_simulation_config
 from marl_trading.exchange.models import OrderType, Side
 from marl_trading.market import SyntheticMarketSimulator
+from marl_trading.rl.scenario import exclude_agents_from_config
 
 
 def test_synthetic_market_demo_is_deterministic_and_generates_activity() -> None:
@@ -53,6 +54,40 @@ def test_exogenous_path_is_fixed_when_agent_configuration_changes() -> None:
     assert [event.payload for event in baseline.event_log.news_events()] == [
         event.payload for event in expanded.event_log.news_events()
     ]
+
+
+def test_preserved_excluded_turn_slot_is_a_noop_without_redistributing_actions() -> None:
+    config = exclude_agents_from_config(
+        default_simulation_config(),
+        excluded_agent_ids=("informed_01",),
+        preserve_excluded_turn_slots=True,
+    )
+    sim = SyntheticMarketSimulator(config, horizon=8)
+    sim.reset(seed=7, horizon=8)
+    decision_counts = {agent_id: 0 for agent_id in sim.agents}
+
+    class _CountingAgent(ScriptedAgent):
+        def __init__(self, agent_id: str, agent_type: str) -> None:
+            super().__init__(agent_id=agent_id, agent_type=agent_type)
+
+        def decide(self, observation: MarketObservation, rng):  # noqa: ARG002
+            decision_counts[self.agent_id] += 1
+            return ()
+
+    for agent_id, agent in list(sim.agents.items()):
+        sim.agents[agent_id] = _CountingAgent(agent_id, agent.agent_type)
+
+    for _ in range(8):
+        sim.step()
+
+    assert config.turn_schedule_agent_ids == ("maker_01", "retail_01", "informed_01", "trend_01")
+    assert decision_counts == {"maker_01": 2, "retail_01": 2, "trend_01": 2}
+    noop_steps = [
+        event.timestamp
+        for event in sim.event_log.snapshots()
+        if event.payload.get("scheduled_noop") is True
+    ]
+    assert noop_steps == [3.0, 7.0]
 
 
 def test_synthetic_market_event_log_uses_replay_contract() -> None:

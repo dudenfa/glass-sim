@@ -25,7 +25,13 @@ from marl_trading.rl import (
     observation_to_feature_dict,
 )
 from marl_trading.rl.live import RuntimePolicyDecision, decode_policy_action
-from marl_trading.rl.scenario import FrozenAgentSpec, prepare_frozen_agent_config, prepare_frozen_agent_configs, prepare_learning_agent_config
+from marl_trading.rl.scenario import (
+    FrozenAgentSpec,
+    exclude_agents_from_config,
+    prepare_frozen_agent_config,
+    prepare_frozen_agent_configs,
+    prepare_learning_agent_config,
+)
 
 
 def _observation(**overrides):
@@ -90,6 +96,16 @@ def test_action_mapping_covers_small_rl_action_set() -> None:
     assert limit_sell.side is Side.SELL
     assert limit_sell.order_type is OrderType.LIMIT
     assert limit_sell.limit_price == pytest.approx(100.04)
+
+
+def test_exclude_agents_from_config_removes_requested_scripted_participant() -> None:
+    config = default_simulation_config()
+
+    updated = exclude_agents_from_config(config, excluded_agent_ids=("informed_01",))
+
+    assert [agent.agent_id.value for agent in updated.agents] == ["maker_01", "retail_01", "trend_01"]
+    with pytest.raises(KeyError, match="Unknown excluded agent"):
+        exclude_agents_from_config(config, excluded_agent_ids=("missing_agent",))
 
 
 def test_observation_features_are_compact_and_ordered() -> None:

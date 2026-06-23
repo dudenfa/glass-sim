@@ -91,3 +91,4 @@ class SimulationConfig:
     enable_news: bool = True
     enable_private_signals: bool = True
     public_tape_enabled: bool = True
+    turn_schedule_agent_ids: Tuple[str, ...] | None = None

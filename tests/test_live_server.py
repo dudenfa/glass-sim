@@ -83,6 +83,19 @@ def test_live_server_cli_parses_add_learning_agent_flags(monkeypatch) -> None:
     assert args.learning_agent_template_id == "trend_01"
 
 
+def test_live_server_cli_parses_excluded_agent(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["serve_market_view.py", "--exclude-agent", "informed_01", "--preserve-excluded-turn-slots"],
+    )
+
+    args = parse_args()
+
+    assert args.exclude_agent == ["informed_01"]
+    assert args.preserve_excluded_turn_slots is True
+
+
 def test_live_server_cli_parses_frozen_agent_flags(monkeypatch) -> None:
     monkeypatch.setattr(
         sys,

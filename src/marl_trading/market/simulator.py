@@ -762,6 +762,16 @@ class SyntheticMarketSimulator:
         self._session_end_logged = True
         self._simulation_finished = True
 
+    def next_scheduled_agent_id(self) -> str | None:
+        step_index = self._current_step_index + 1
+        turn_schedule = self.config.turn_schedule_agent_ids
+        if turn_schedule:
+            return str(turn_schedule[(step_index - 1) % len(turn_schedule)])
+        active_ids = [agent_id for agent_id, portfolio in self.portfolios.portfolios.items() if portfolio.active]
+        if not active_ids:
+            return None
+        return active_ids[(step_index - 1) % len(active_ids)]
+
     def _advance_one_step(self) -> MarketStepRecord | None:
         if not self._simulation_started:
             self._start_session()
@@ -825,25 +835,26 @@ class SyntheticMarketSimulator:
                 self._finalize_session()
             return record
 
-        chosen_agent_id = active_ids[(step_index - 1) % len(active_ids)]
-        chosen_agent = self.agents[chosen_agent_id]
-        chosen_portfolio = self.portfolios.get(chosen_agent_id)
-        observation = self._make_observation(
-            agent_id=chosen_agent_id,
-            step_index=step_index,
-            timestamp_ns=timestamp_ns,
-            news=news_event,
-            portfolio=chosen_portfolio,
-            snapshot=snapshot,
-        )
-        intents = self._normalize_intents(chosen_agent.decide(observation, self.rng))
-        for intent in intents:
-            self._submit_intent(
+        chosen_agent_id = self.next_scheduled_agent_id()
+        if chosen_agent_id in self.agents and self.portfolios.get(chosen_agent_id).active:
+            chosen_agent = self.agents[chosen_agent_id]
+            chosen_portfolio = self.portfolios.get(chosen_agent_id)
+            observation = self._make_observation(
                 agent_id=chosen_agent_id,
-                intent=intent,
-                timestamp_ns=timestamp_ns,
                 step_index=step_index,
+                timestamp_ns=timestamp_ns,
+                news=news_event,
+                portfolio=chosen_portfolio,
+                snapshot=snapshot,
             )
+            intents = self._normalize_intents(chosen_agent.decide(observation, self.rng))
+            for intent in intents:
+                self._submit_intent(
+                    agent_id=chosen_agent_id,
+                    intent=intent,
+                    timestamp_ns=timestamp_ns,
+                    step_index=step_index,
+                )
 
         self._deactivate_ruined_agents(timestamp_ns=timestamp_ns)
         snapshot = self._current_book_snapshot(timestamp_ns)
@@ -862,6 +873,8 @@ class SyntheticMarketSimulator:
                 "news_headline": None if news_event is None else news_event.headline,
                 "news_severity": None if news_event is None else news_event.severity,
                 "total_equity": total_equity,
+                "scheduled_agent_id": chosen_agent_id,
+                "scheduled_noop": chosen_agent_id not in self.agents,
             },
             order_book=snapshot,
         )

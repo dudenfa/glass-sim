@@ -201,6 +201,18 @@ def parse_args() -> argparse.Namespace:
         default="baseline",
         help="Named preset from marl_trading.configs.presets.",
     )
+    parser.add_argument(
+        "--exclude-agent",
+        action="append",
+        default=[],
+        metavar="AGENT_ID",
+        help="Remove a scripted participant from the base preset before adding runtime RL agents.",
+    )
+    parser.add_argument(
+        "--preserve-excluded-turn-slots",
+        action="store_true",
+        help="Keep excluded participants' scheduled turns as no-ops so surviving agents do not receive extra actions.",
+    )
     parser.add_argument("--seed", type=int, default=7, help="Simulation seed.")
     parser.add_argument("--horizon", type=int, default=10_000, help="Number of steps in the live demo session.")
     parser.add_argument("--speed", type=float, default=4.0, help="Playback speed in steps per second.")

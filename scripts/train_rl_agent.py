@@ -18,6 +18,7 @@ from marl_trading.core.config import SimulationConfig
 from marl_trading.rl.scenario import (
     FrozenAgentSpec,
     build_frozen_agent_specs,
+    exclude_agents_from_config,
     prepare_frozen_agent_config,
     prepare_frozen_agent_configs,
     prepare_learning_agent_config,
@@ -55,6 +56,18 @@ def build_parser() -> argparse.ArgumentParser:
         choices=available_preset_names(),
         default="baseline",
         help="Named preset used as the scripted market ecology.",
+    )
+    parser.add_argument(
+        "--exclude-agent",
+        action="append",
+        default=[],
+        metavar="AGENT_ID",
+        help="Remove a scripted participant from the base preset before adding runtime RL agents.",
+    )
+    parser.add_argument(
+        "--preserve-excluded-turn-slots",
+        action="store_true",
+        help="Keep excluded participants' scheduled turns as no-ops so surviving agents do not receive extra actions.",
     )
     parser.add_argument(
         "--learning-agent-id",
@@ -247,6 +260,8 @@ def build_training_config(
     learning_agent_id: str = "trend_01",
     add_learning_agent: bool = False,
     learning_agent_template_id: str | None = None,
+    excluded_agent_ids: tuple[str, ...] = (),
+    preserve_excluded_turn_slots: bool = False,
     frozen_agents: tuple[FrozenAgentSpec, ...] = (),
     frozen_agent_id: str | None = None,
     add_frozen_agent: bool = False,
@@ -255,6 +270,11 @@ def build_training_config(
     config = build_preset_config(preset_name)
     if seed is not None:
         config = replace(config, seed=int(seed))
+    config = exclude_agents_from_config(
+        config,
+        excluded_agent_ids=excluded_agent_ids,
+        preserve_excluded_turn_slots=preserve_excluded_turn_slots,
+    )
     if frozen_agents:
         config = prepare_frozen_agent_configs(config, frozen_agents=frozen_agents)
     elif frozen_agent_id is not None:
@@ -381,6 +401,8 @@ def build_training_metadata(
         "learning_agent_id": str(args.learning_agent_id),
         "add_learning_agent": bool(args.add_learning_agent),
         "learning_agent_template_id": None if args.learning_agent_template_id is None else str(args.learning_agent_template_id),
+        "excluded_agent_ids": list(args.exclude_agent or ()),
+        "preserve_excluded_turn_slots": bool(args.preserve_excluded_turn_slots),
         "frozen_agent_checkpoint": None if args.frozen_agent_checkpoint is None else str(Path(args.frozen_agent_checkpoint).resolve()),
         "frozen_agent_id": None if args.frozen_agent_id is None else str(args.frozen_agent_id),
         "add_frozen_agent": bool(args.add_frozen_agent),
@@ -435,6 +457,8 @@ def train_ppo_agent(args: argparse.Namespace) -> dict[str, Any]:
         learning_agent_id=str(args.learning_agent_id),
         add_learning_agent=bool(args.add_learning_agent),
         learning_agent_template_id=None if args.learning_agent_template_id is None else str(args.learning_agent_template_id),
+        excluded_agent_ids=tuple(args.exclude_agent or ()),
+        preserve_excluded_turn_slots=bool(args.preserve_excluded_turn_slots),
         frozen_agents=frozen_agent_specs,
     )
     train_seeds = parse_seed_schedule(args.train_seeds)

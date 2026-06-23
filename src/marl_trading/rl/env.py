@@ -321,13 +321,7 @@ class SingleAgentMarketEnv:
     def _is_learning_turn(self) -> bool:
         if self.simulator is None:
             return False
-        active_ids = self._active_agent_ids()
-        if not active_ids:
-            return False
-        if self.env_config.learning_agent_id not in active_ids:
-            return False
-        next_index = self.simulator.current_step_index % len(active_ids)
-        return active_ids[next_index] == self.env_config.learning_agent_id
+        return self.simulator.next_scheduled_agent_id() == self.env_config.learning_agent_id
 
     def _build_observation(self) -> MarketObservation:
         if self.simulator is None:

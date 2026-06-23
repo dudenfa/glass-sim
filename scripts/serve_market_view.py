@@ -13,6 +13,7 @@ from marl_trading.configs import build_preset_config
 from marl_trading.live.server import LiveServerConfig, parse_args, serve_market_view
 from marl_trading.rl.scenario import (
     build_frozen_agent_specs,
+    exclude_agents_from_config,
     prepare_frozen_agent_configs,
     prepare_learning_agent_config,
 )
@@ -37,6 +38,11 @@ def main() -> None:
     simulation_config = build_preset_config(args.preset)
     if args.seed is not None:
         simulation_config = replace(simulation_config, seed=int(args.seed))
+    simulation_config = exclude_agents_from_config(
+        simulation_config,
+        excluded_agent_ids=tuple(args.exclude_agent or ()),
+        preserve_excluded_turn_slots=bool(args.preserve_excluded_turn_slots),
+    )
     learning_agent_id = None
     checkpoint_path = None
     simulation_config = prepare_frozen_agent_configs(simulation_config, frozen_agents=frozen_agent_specs)
@@ -85,6 +91,10 @@ def main() -> None:
         )
         if frozen_agent.starting_inventory is not None:
             print(f"Frozen PPO starting inventory override for '{frozen_agent.agent_id}': {float(frozen_agent.starting_inventory):.2f}")
+    if args.exclude_agent:
+        print("Excluded base-preset participant(s): " + ", ".join(args.exclude_agent))
+    if args.preserve_excluded_turn_slots:
+        print("Excluded participant turns are preserved as no-ops.")
     print("Use Ctrl+C to stop.")
     try:
         while True:
