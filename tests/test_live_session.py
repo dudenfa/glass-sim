@@ -48,6 +48,14 @@ def test_live_session_controls() -> None:
     assert session.state()["session"]["status"] == "paused"
 
 
+def test_live_session_allows_high_speed_playback() -> None:
+    session = LiveMarketSession(horizon=8, autoplay=False, step_delay_seconds=0.01)
+
+    session.set_speed(256.0)
+
+    assert session.state()["session"]["steps_per_second"] == 256.0
+
+
 def test_live_session_exposes_live_pnl_payload() -> None:
     session = LiveMarketSession(horizon=24, autoplay=False, step_delay_seconds=0.01)
 
@@ -64,6 +72,22 @@ def test_live_session_exposes_live_pnl_payload() -> None:
     )
     assert any(agent["last_action"] for agent in updated_state["agents"])
     assert any(int(agent["open_orders"]) > 0 for agent in updated_state["agents"])
+
+
+def test_live_session_emits_final_evaluation_payload() -> None:
+    session = LiveMarketSession(horizon=12, autoplay=False, step_delay_seconds=0.01)
+
+    final_state = session.step(12)
+
+    assert final_state["session"]["finished"] is True
+    evaluation = final_state["evaluation"]
+    assert evaluation is not None
+    assert evaluation["summary"]["step_count"] == 12
+    assert evaluation["summary"]["trade_count"] >= 0
+    assert len(evaluation["portfolio_breakdown"]) == len(final_state["agents"])
+    first_row = evaluation["portfolio_breakdown"][0]
+    assert "max_equity_drawdown" in first_row
+    assert "max_abs_inventory" in first_row
 
 
 def test_live_session_tape_accumulates_across_snapshot_window() -> None:
@@ -105,6 +129,24 @@ def test_live_session_bounded_history_window_preserves_step_indices() -> None:
     assert "midpoint" in history[-1]
     assert "volume" in history[-1]
     assert "last_price" in state["market"]
+
+
+def test_live_session_can_return_full_history_after_a_windowed_run() -> None:
+    session = LiveMarketSession(
+        horizon=80,
+        history_limit=24,
+        event_limit=24,
+        autoplay=False,
+        step_delay_seconds=0.01,
+    )
+
+    session.run_to_end()
+    state = session.state(full_history=True)
+
+    assert state["session"]["finished"] is True
+    assert len(state["history"]) == 81
+    assert state["history"][0]["step_index"] == 0
+    assert state["history"][-1]["step_index"] == 80
 
 
 def test_live_session_candles_stay_aligned_to_absolute_step_buckets() -> None:
@@ -182,6 +224,16 @@ def test_live_session_reset_restores_initial_state() -> None:
     assert reset_state["session"]["step_index"] == 0
     assert reset_state["session"]["reset_count"] >= 1
     assert reset_state["session"]["status"] == "paused"
+
+
+def test_live_session_run_to_end_finishes_without_replay_delay() -> None:
+    session = LiveMarketSession(horizon=20, autoplay=False, step_delay_seconds=1.0)
+
+    state = session.run_to_end()
+
+    assert state["session"]["finished"] is True
+    assert state["session"]["step_index"] == 20
+    assert state["evaluation"] is not None
 
 
 def test_live_session_runtime_ppo_replaces_requested_slot(monkeypatch) -> None:

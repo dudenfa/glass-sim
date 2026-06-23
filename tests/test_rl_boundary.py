@@ -25,7 +25,7 @@ from marl_trading.rl import (
     observation_to_feature_dict,
 )
 from marl_trading.rl.live import RuntimePolicyDecision, decode_policy_action
-from marl_trading.rl.scenario import prepare_frozen_agent_config, prepare_learning_agent_config
+from marl_trading.rl.scenario import FrozenAgentSpec, prepare_frozen_agent_config, prepare_frozen_agent_configs, prepare_learning_agent_config
 
 
 def _observation(**overrides):
@@ -672,6 +672,67 @@ def test_frozen_runtime_agent_can_be_attached_with_inventory_override(monkeypatc
     assert env.simulator.agents["rl_01"].agent_type == "rl_agent"
     assert frozen_portfolio.starting_inventory == pytest.approx(0.0)
     assert learning_portfolio.starting_inventory == pytest.approx(0.0)
+
+
+def test_multiple_frozen_runtime_agents_can_be_attached(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeFrozenPolicy:
+        def action_for(self, observation):  # noqa: ARG002
+            raw_action = (0, 0, 0)
+            return RuntimePolicyDecision(
+                features=tuple(),
+                raw_action=raw_action,
+                rl_action=decode_policy_action(raw_action),
+            )
+
+    loaded_paths: list[str] = []
+
+    def _fake_load(checkpoint_path, device="cpu", deterministic=True):  # noqa: ARG001
+        loaded_paths.append(str(checkpoint_path))
+        return _FakeFrozenPolicy(), SimpleNamespace(available=True, checkpoint_path=checkpoint_path, reason=None)
+
+    monkeypatch.setattr("marl_trading.rl.env.PPOPolicyAdapter.try_load", _fake_load)
+
+    frozen_agents = (
+        FrozenAgentSpec(
+            agent_id="rl_01",
+            checkpoint_path="/tmp/frozen_rl_01.zip",
+            add_agent=True,
+            template_id="trend_01",
+            starting_inventory=0.0,
+        ),
+        FrozenAgentSpec(
+            agent_id="rl_02",
+            checkpoint_path="/tmp/frozen_rl_02.zip",
+            add_agent=True,
+            template_id="trend_01",
+            starting_inventory=0.0,
+        ),
+    )
+    config = prepare_frozen_agent_configs(default_simulation_config(), frozen_agents=frozen_agents)
+    config = prepare_learning_agent_config(
+        config,
+        learning_agent_id="rl_03",
+        add_learning_agent=True,
+        learning_agent_template_id="trend_01",
+    )
+    env = SingleAgentMarketEnv(
+        config=replace(config),
+        env_config=SingleAgentEnvConfig(
+            learning_agent_id="rl_03",
+            learning_agent_starting_inventory=0.0,
+            frozen_agents=frozen_agents,
+        ),
+        horizon=24,
+    )
+
+    env.reset(seed=7, horizon=24)
+
+    assert loaded_paths == ["/tmp/frozen_rl_01.zip", "/tmp/frozen_rl_02.zip"]
+    assert env.simulator.agents["rl_01"].agent_type == "rl_agent"
+    assert env.simulator.agents["rl_02"].agent_type == "rl_agent"
+    assert env.simulator.portfolios.get("rl_01").starting_inventory == pytest.approx(0.0)
+    assert env.simulator.portfolios.get("rl_02").starting_inventory == pytest.approx(0.0)
+    assert env.simulator.portfolios.get("rl_03").starting_inventory == pytest.approx(0.0)
 
 
 def test_gym_wrapper_exposes_spaces_and_reset_semantics() -> None:

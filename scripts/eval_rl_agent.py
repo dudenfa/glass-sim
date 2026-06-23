@@ -15,7 +15,13 @@ if str(SRC_ROOT) not in sys.path:
 
 from marl_trading.configs import available_preset_names, build_preset_config, get_preset
 from marl_trading.core.config import SimulationConfig
-from marl_trading.rl.scenario import prepare_frozen_agent_config, prepare_learning_agent_config
+from marl_trading.rl.scenario import (
+    FrozenAgentSpec,
+    build_frozen_agent_specs,
+    prepare_frozen_agent_config,
+    prepare_frozen_agent_configs,
+    prepare_learning_agent_config,
+)
 
 REWARD_BASE_TERM = "realized_pnl_delta + reward_equity_delta_coefficient * equity_delta"
 ALGORITHM_CHOICES = ("auto", "ppo", "maskable_ppo")
@@ -64,6 +70,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--learning-agent-template-id",
         default=None,
         help="Existing scripted agent id to clone when --add-learning-agent is enabled.",
+    )
+    parser.add_argument(
+        "--frozen-agent",
+        action="append",
+        default=[],
+        metavar="AGENT_ID:CHECKPOINT[:TEMPLATE_ID[:STARTING_INVENTORY]]",
+        help=(
+            "Frozen PPO opponent spec. Repeat for multiple frozen agents. "
+            "Providing TEMPLATE_ID adds a new participant cloned from that scripted template."
+        ),
     )
     parser.add_argument(
         "--frozen-agent-checkpoint",
@@ -227,16 +243,23 @@ def _normalize_checkpoint_load_path(checkpoint_path: Path) -> str:
 
 
 def validate_runtime_agent_args(args: argparse.Namespace) -> None:
-    frozen_agent_checkpoint = args.frozen_agent_checkpoint
-    frozen_agent_id = str(args.frozen_agent_id or "").strip()
-    if frozen_agent_checkpoint is None:
-        if args.frozen_agent_id is not None or bool(args.add_frozen_agent) or args.frozen_agent_template_id is not None:
-            raise ValueError("--frozen-agent-checkpoint is required when configuring a frozen agent.")
-        return
-    if not frozen_agent_id:
-        raise ValueError("--frozen-agent-id is required when --frozen-agent-checkpoint is provided.")
-    if frozen_agent_id == str(args.learning_agent_id):
-        raise ValueError("frozen-agent-id must be different from learning-agent-id.")
+    resolve_frozen_agent_specs(args)
+
+
+def resolve_frozen_agent_specs(args: argparse.Namespace) -> tuple[FrozenAgentSpec, ...]:
+    specs = build_frozen_agent_specs(
+        frozen_agents=tuple(args.frozen_agent or ()),
+        frozen_agent_checkpoint_path=args.frozen_agent_checkpoint,
+        frozen_agent_id=args.frozen_agent_id,
+        add_frozen_agent=bool(args.add_frozen_agent),
+        frozen_agent_template_id=args.frozen_agent_template_id,
+        frozen_agent_starting_inventory=args.frozen_agent_starting_inventory,
+    )
+    learning_agent_id = str(args.learning_agent_id)
+    for spec in specs:
+        if spec.agent_id == learning_agent_id:
+            raise ValueError("frozen-agent-id must be different from learning-agent-id.")
+    return specs
 
 
 def _preset_overview() -> str:
@@ -255,6 +278,7 @@ def build_eval_config(
     learning_agent_id: str = "trend_01",
     add_learning_agent: bool = False,
     learning_agent_template_id: str | None = None,
+    frozen_agents: tuple[FrozenAgentSpec, ...] = (),
     frozen_agent_id: str | None = None,
     add_frozen_agent: bool = False,
     frozen_agent_template_id: str | None = None,
@@ -262,7 +286,9 @@ def build_eval_config(
     config = build_preset_config(preset_name)
     if seed is not None:
         config = replace(config, seed=int(seed))
-    if frozen_agent_id is not None:
+    if frozen_agents:
+        config = prepare_frozen_agent_configs(config, frozen_agents=frozen_agents)
+    elif frozen_agent_id is not None:
         config = prepare_frozen_agent_config(
             config,
             frozen_agent_id=frozen_agent_id,
@@ -331,6 +357,7 @@ def build_rl_evaluation_payload(
     add_frozen_agent: bool,
     frozen_agent_template_id: str | None,
     frozen_agent_starting_inventory: float | None,
+    frozen_agents: tuple[FrozenAgentSpec, ...] = (),
     phase_a_action_space: bool,
     include_cancel_action: bool,
     fixed_order_quantity: int,
@@ -358,6 +385,9 @@ def build_rl_evaluation_payload(
         starting_inventory_overrides[str(learning_agent_id)] = float(learning_agent_starting_inventory)
     if frozen_agent_id is not None and frozen_agent_starting_inventory is not None:
         starting_inventory_overrides[str(frozen_agent_id)] = float(frozen_agent_starting_inventory)
+    for frozen_agent in frozen_agents:
+        if frozen_agent.starting_inventory is not None:
+            starting_inventory_overrides[str(frozen_agent.agent_id)] = float(frozen_agent.starting_inventory)
 
     summary = summarize_market_health(result)
     final_mark_price = float(
@@ -419,6 +449,7 @@ def build_rl_evaluation_payload(
             "add_frozen_agent": bool(add_frozen_agent),
             "frozen_agent_template_id": None if frozen_agent_template_id is None else str(frozen_agent_template_id),
             "frozen_agent_starting_inventory": None if frozen_agent_starting_inventory is None else float(frozen_agent_starting_inventory),
+            "frozen_agents": [spec.to_metadata() for spec in frozen_agents],
             "phase_a_action_space": bool(phase_a_action_space),
             "include_cancel_action": bool(include_cancel_action),
             "fixed_order_quantity": int(fixed_order_quantity),
@@ -429,7 +460,13 @@ def build_rl_evaluation_payload(
             "reward_inventory_risk_penalty": float(reward_inventory_risk_penalty),
             "deterministic": bool(deterministic),
             "runtime_learning_agent_mode": "add" if bool(add_learning_agent) else "replace",
-            "runtime_frozen_agent_mode": None if frozen_agent_id is None else ("add" if bool(add_frozen_agent) else "replace"),
+            "runtime_frozen_agent_mode": (
+                None
+                if not frozen_agents and frozen_agent_id is None
+                else "multi"
+                if len(frozen_agents) > 1
+                else ("add" if bool((frozen_agents[0].add_agent if frozen_agents else add_frozen_agent)) else "replace")
+            ),
             **reward_metadata,
         },
     }
@@ -469,7 +506,7 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
     if algorithm == "maskable_ppo" and not bool(args.phase_a_action_space):
         raise ValueError("MaskablePPO evaluation is currently supported only with the simplified Phase A action space.")
-    validate_runtime_agent_args(args)
+    frozen_agent_specs = resolve_frozen_agent_specs(args)
 
     config, effective_horizon = build_eval_config(
         args.preset,
@@ -478,16 +515,18 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         learning_agent_id=str(args.learning_agent_id),
         add_learning_agent=bool(args.add_learning_agent),
         learning_agent_template_id=None if args.learning_agent_template_id is None else str(args.learning_agent_template_id),
-        frozen_agent_id=None if args.frozen_agent_id is None else str(args.frozen_agent_id),
-        add_frozen_agent=bool(args.add_frozen_agent),
-        frozen_agent_template_id=None if args.frozen_agent_template_id is None else str(args.frozen_agent_template_id),
+        frozen_agents=frozen_agent_specs,
     )
+    use_legacy_frozen_env = not bool(args.frozen_agent) and args.frozen_agent_checkpoint is not None
     env_config = SingleAgentEnvConfig(
         learning_agent_id=str(args.learning_agent_id),
         learning_agent_starting_inventory=float(args.learning_agent_starting_inventory),
-        frozen_agent_id=None if args.frozen_agent_id is None else str(args.frozen_agent_id),
-        frozen_agent_checkpoint_path=None if args.frozen_agent_checkpoint is None else str(Path(args.frozen_agent_checkpoint).resolve()),
-        frozen_agent_starting_inventory=None if args.frozen_agent_starting_inventory is None else float(args.frozen_agent_starting_inventory),
+        frozen_agents=() if use_legacy_frozen_env else frozen_agent_specs,
+        frozen_agent_id=None if not use_legacy_frozen_env else str(args.frozen_agent_id),
+        frozen_agent_checkpoint_path=None if not use_legacy_frozen_env else str(Path(args.frozen_agent_checkpoint).resolve()),
+        frozen_agent_starting_inventory=None if not use_legacy_frozen_env else (
+            None if args.frozen_agent_starting_inventory is None else float(args.frozen_agent_starting_inventory)
+        ),
         phase_a_action_space=bool(args.phase_a_action_space),
         include_cancel_action=bool(args.include_cancel_action),
         fixed_order_quantity=int(args.fixed_order_quantity),
@@ -535,6 +574,7 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         add_frozen_agent=bool(args.add_frozen_agent),
         frozen_agent_template_id=None if args.frozen_agent_template_id is None else str(args.frozen_agent_template_id),
         frozen_agent_starting_inventory=None if args.frozen_agent_starting_inventory is None else float(args.frozen_agent_starting_inventory),
+        frozen_agents=frozen_agent_specs,
         phase_a_action_space=bool(args.phase_a_action_space),
         include_cancel_action=bool(args.include_cancel_action),
         fixed_order_quantity=int(args.fixed_order_quantity),

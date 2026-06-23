@@ -8,11 +8,19 @@ import time
 from typing import Any
 
 from marl_trading.agents.base import ScriptedAgent
-from marl_trading.analysis import EventType, MarketEvent, OrderBookSnapshot
+from marl_trading.analysis import (
+    EventType,
+    MarketEvent,
+    OrderBookSnapshot,
+    build_agent_health_metrics,
+    build_portfolio_health_rows,
+    summarize_market_health,
+)
 from marl_trading.configs.defaults import default_simulation_config
 from marl_trading.core.config import SimulationConfig
-from marl_trading.market.simulator import SyntheticMarketSimulator, _analysis_snapshot_from_exchange_snapshot
+from marl_trading.market.simulator import MarketRunResult, SyntheticMarketSimulator, _analysis_snapshot_from_exchange_snapshot
 from marl_trading.rl.live import PPOPolicyAdapter, RuntimePolicyControlledAgent
+from marl_trading.rl.scenario import FrozenAgentSpec, build_frozen_agent_specs
 
 
 @dataclass
@@ -30,6 +38,7 @@ class _RuntimeRLConfig:
     checkpoint_path: Path | None
     learning_agent_id: str | None
     learning_agent_starting_inventory: float
+    frozen_agents: tuple[FrozenAgentSpec, ...] = ()
     frozen_agent_checkpoint_path: Path | None = None
     frozen_agent_id: str | None = None
     frozen_agent_starting_inventory: float | None = None
@@ -48,6 +57,7 @@ class LiveMarketSession:
         checkpoint_path: str | Path | None = None,
         learning_agent_id: str | None = None,
         learning_agent_starting_inventory: float = 0.0,
+        frozen_agents: tuple[FrozenAgentSpec, ...] = (),
         frozen_agent_checkpoint_path: str | Path | None = None,
         frozen_agent_id: str | None = None,
         frozen_agent_starting_inventory: float | None = None,
@@ -62,6 +72,7 @@ class LiveMarketSession:
             checkpoint_path=checkpoint_path,
             learning_agent_id=learning_agent_id,
             learning_agent_starting_inventory=learning_agent_starting_inventory,
+            frozen_agents=frozen_agents,
             frozen_agent_checkpoint_path=frozen_agent_checkpoint_path,
             frozen_agent_id=frozen_agent_id,
             frozen_agent_starting_inventory=frozen_agent_starting_inventory,
@@ -71,11 +82,7 @@ class LiveMarketSession:
             if self._runtime_rl is None or self._runtime_rl.checkpoint_path is None
             else self._load_ppo_policy(self._runtime_rl.checkpoint_path)
         )
-        self._frozen_ppo_model = (
-            None
-            if self._runtime_rl is None or self._runtime_rl.frozen_agent_checkpoint_path is None
-            else self._load_ppo_policy(self._runtime_rl.frozen_agent_checkpoint_path)
-        )
+        self._frozen_ppo_models = self._load_frozen_ppo_policies()
 
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -90,6 +97,7 @@ class LiveMarketSession:
         self._last_event_timestamp: int | None = None
         self._max_news_severity: float | None = None
         self._latest_state: dict[str, Any] | None = None
+        self._final_evaluation: dict[str, Any] | None = None
         self.playing = False
         self.finished = False
         self.simulator = self._make_simulator(seed=self.base_config.seed, horizon=self.horizon)
@@ -126,26 +134,34 @@ class LiveMarketSession:
         checkpoint_path: str | Path | None,
         learning_agent_id: str | None,
         learning_agent_starting_inventory: float,
+        frozen_agents: tuple[FrozenAgentSpec, ...],
         frozen_agent_checkpoint_path: str | Path | None,
         frozen_agent_id: str | None,
         frozen_agent_starting_inventory: float | None,
     ) -> _RuntimeRLConfig | None:
-        if checkpoint_path is None and frozen_agent_checkpoint_path is None:
+        frozen_agent_specs = build_frozen_agent_specs(
+            frozen_agents=frozen_agents,
+            frozen_agent_checkpoint_path=frozen_agent_checkpoint_path,
+            frozen_agent_id=frozen_agent_id,
+            add_frozen_agent=False,
+            frozen_agent_template_id=None,
+            frozen_agent_starting_inventory=frozen_agent_starting_inventory,
+        )
+        if checkpoint_path is None and not frozen_agent_specs:
             return None
         agent_id = str(learning_agent_id or "").strip()
-        resolved_frozen_id = str(frozen_agent_id or "").strip() or None
         if checkpoint_path is not None and not agent_id:
             raise ValueError("A learning_agent_id is required when checkpoint_path is provided.")
-        if frozen_agent_checkpoint_path is not None and not resolved_frozen_id:
-            raise ValueError("A frozen_agent_id is required when frozen_agent_checkpoint_path is provided.")
-        if agent_id and resolved_frozen_id and agent_id == resolved_frozen_id:
-            raise ValueError("learning_agent_id and frozen_agent_id must be different when both runtime PPO agents are enabled.")
+        for frozen_agent in frozen_agent_specs:
+            if agent_id and agent_id == frozen_agent.agent_id:
+                raise ValueError("learning_agent_id and frozen_agent_id must be different when both runtime PPO agents are enabled.")
         return _RuntimeRLConfig(
             checkpoint_path=None if checkpoint_path is None else Path(checkpoint_path).expanduser().resolve(),
             learning_agent_id=agent_id or None,
             learning_agent_starting_inventory=float(learning_agent_starting_inventory),
-            frozen_agent_checkpoint_path=None if frozen_agent_checkpoint_path is None else Path(frozen_agent_checkpoint_path).expanduser().resolve(),
-            frozen_agent_id=resolved_frozen_id,
+            frozen_agents=frozen_agent_specs,
+            frozen_agent_checkpoint_path=Path(frozen_agent_specs[0].checkpoint_path) if len(frozen_agent_specs) == 1 else None,
+            frozen_agent_id=frozen_agent_specs[0].agent_id if len(frozen_agent_specs) == 1 else None,
             frozen_agent_starting_inventory=None if frozen_agent_starting_inventory is None else float(frozen_agent_starting_inventory),
         )
 
@@ -161,25 +177,33 @@ class LiveMarketSession:
             )
         return adapter
 
+    def _load_frozen_ppo_policies(self) -> dict[str, object]:
+        if self._runtime_rl is None:
+            return {}
+        return {
+            frozen_agent.agent_id: self._load_ppo_policy(Path(frozen_agent.checkpoint_path))
+            for frozen_agent in self._runtime_rl.frozen_agents
+        }
+
     def _attach_runtime_rl_agent(self, simulator: SyntheticMarketSimulator) -> None:
         if self._runtime_rl is None:
             return
-        if self._runtime_rl.frozen_agent_id is not None:
-            frozen_agent_id = self._runtime_rl.frozen_agent_id
+        for frozen_agent in self._runtime_rl.frozen_agents:
+            frozen_agent_id = frozen_agent.agent_id
             if frozen_agent_id not in simulator.agents:
                 raise KeyError(f"Unknown runtime frozen agent id: {frozen_agent_id}")
             original_frozen = simulator.agents[frozen_agent_id]
             simulator.agents[frozen_agent_id] = RuntimePolicyControlledAgent(
                 agent_id=frozen_agent_id,
-                policy=self._frozen_ppo_model,
+                policy=self._frozen_ppo_models.get(frozen_agent_id),
                 fallback_agent=original_frozen if isinstance(original_frozen, ScriptedAgent) else None,
                 agent_type="rl_agent",
                 max_resting_orders=getattr(original_frozen, "max_resting_orders", 1),
                 delegate_bootstrap=False,
             )
-            if self._runtime_rl.frozen_agent_starting_inventory is not None:
+            if frozen_agent.starting_inventory is not None:
                 portfolio = simulator.portfolios.get(frozen_agent_id)
-                overridden_inventory = float(self._runtime_rl.frozen_agent_starting_inventory)
+                overridden_inventory = float(frozen_agent.starting_inventory)
                 portfolio.starting_inventory = overridden_inventory
                 portfolio.inventory = overridden_inventory
                 portfolio.reserved_inventory = 0.0
@@ -314,12 +338,19 @@ class LiveMarketSession:
                 self._last_action_by_agent[str(event.agent_id)] = event_dict
             self._processed_event_count += 1
 
-    def _build_line(self, *, start_index: int | None = None) -> list[dict[str, Any]]:
+    def _build_line(
+        self,
+        *,
+        start_index: int | None = None,
+        full_history: bool = False,
+    ) -> list[dict[str, Any]]:
         price_history = self.simulator.price_history
         if not price_history:
             return []
 
-        if start_index is None:
+        if start_index is None and full_history:
+            start_index = 0
+        elif start_index is None:
             history_limit = max(int(self.history_limit), 1)
             start_index = max(0, len(price_history) - history_limit)
         else:
@@ -454,7 +485,82 @@ class LiveMarketSession:
         agents.sort(key=lambda item: float(item.get("equity", 0.0)), reverse=True)
         return agents
 
-    def _build_state(self, *, full_book: bool = True, depth: int = 10, candle_window: int = 5) -> dict[str, Any]:
+    def _starting_inventory_overrides(self) -> dict[str, float]:
+        if self._runtime_rl is None:
+            return {}
+        overrides = {
+            frozen_agent.agent_id: float(frozen_agent.starting_inventory)
+            for frozen_agent in self._runtime_rl.frozen_agents
+            if frozen_agent.starting_inventory is not None
+        }
+        if self._runtime_rl.learning_agent_id is not None:
+            overrides[self._runtime_rl.learning_agent_id] = float(self._runtime_rl.learning_agent_starting_inventory)
+        return overrides
+
+    def _build_final_evaluation(self) -> dict[str, Any]:
+        final_snapshot = self.simulator._current_book_snapshot(self.simulator.current_step_index)  # noqa: SLF001
+        final_portfolios = {
+            agent_id: portfolio.summary(self.simulator.mark_price_for_portfolio(portfolio, snapshot=final_snapshot))
+            for agent_id, portfolio in self.simulator.portfolios.portfolios.items()
+        }
+        run_result = MarketRunResult(
+            event_log=self.simulator.event_log,
+            step_records=list(self.simulator.step_records),
+            summary={},
+            final_portfolios=final_portfolios,
+            final_fundamental=float(self.simulator.fundamental.current_value),
+        )
+        health_summary = summarize_market_health(run_result)
+        open_orders_by_agent = {
+            agent_id: len(queue)
+            for agent_id, queue in self.simulator.open_orders.items()
+        }
+        agent_metrics = build_agent_health_metrics(
+            list(self.simulator.event_log.events),
+            self.simulator.config.agents,
+            starting_midpoint=float(self.simulator.start_midpoint),
+            final_mark_price=float(
+                health_summary.final_midpoint
+                or health_summary.final_fundamental
+                or self.simulator.start_midpoint
+            ),
+            final_portfolios=final_portfolios,
+            open_orders_by_agent=open_orders_by_agent,
+            starting_inventory_overrides=self._starting_inventory_overrides(),
+        )
+        portfolio_rows = build_portfolio_health_rows(
+            final_portfolios,
+            self.simulator.config.agents,
+            starting_midpoint=float(self.simulator.start_midpoint),
+            agent_metrics=agent_metrics,
+            starting_inventory_overrides=self._starting_inventory_overrides(),
+        )
+        return {
+            "summary": health_summary.to_dict(),
+            "portfolio_breakdown": [row.to_dict() for row in portfolio_rows],
+            "runtime_policy": {
+                "learning_agent_id": None if self._runtime_rl is None else self._runtime_rl.learning_agent_id,
+                "frozen_agents": []
+                if self._runtime_rl is None
+                else [frozen_agent.to_metadata() for frozen_agent in self._runtime_rl.frozen_agents],
+            },
+        }
+
+    def _final_evaluation_payload(self) -> dict[str, Any] | None:
+        if not (self.finished or self.simulator.is_finished):
+            return None
+        if self._final_evaluation is None:
+            self._final_evaluation = self._build_final_evaluation()
+        return self._final_evaluation
+
+    def _build_state(
+        self,
+        *,
+        full_book: bool = True,
+        depth: int = 10,
+        candle_window: int = 5,
+        full_history: bool = False,
+    ) -> dict[str, Any]:
         self._ingest_new_events()
         current_step = int(self.simulator.current_step_index)
         top_snapshot = self.simulator._current_book_snapshot(timestamp_ns=current_step)  # noqa: SLF001
@@ -468,11 +574,11 @@ class LiveMarketSession:
         full_snapshot = self._analysis_snapshot(depth=max(full_depth, 1), timestamp_ns=current_step) if full_book else top_snapshot
         recent_events = [self._event_to_dict(event) for event in self.simulator.event_log.events[-self.event_limit :]]
         recent_trades = [trade for trade in self._trade_history[-self.event_limit :]]
-        line = self._build_line()
+        line = self._build_line(full_history=full_history)
         candle_start_index = int(line[0]["step_index"]) if line else 0
         if candle_window > 0:
             candle_start_index = max(0, candle_start_index - (candle_start_index % candle_window))
-        candle_line = self._build_line(start_index=candle_start_index)
+        candle_line = self._build_line(start_index=candle_start_index, full_history=full_history)
         candles = self._build_candles(candle_line, candle_window, recent_trades=recent_trades, recent_events=recent_events)
         recent_news = []
         for event in recent_events:
@@ -627,6 +733,9 @@ class LiveMarketSession:
                     "frozen_agent_id": None if self._runtime_rl is None else self._runtime_rl.frozen_agent_id,
                     "frozen_agent_checkpoint_path": None if self._runtime_rl is None or self._runtime_rl.frozen_agent_checkpoint_path is None else str(self._runtime_rl.frozen_agent_checkpoint_path),
                     "frozen_agent_starting_inventory": None if self._runtime_rl is None else self._runtime_rl.frozen_agent_starting_inventory,
+                    "frozen_agents": []
+                    if self._runtime_rl is None
+                    else [frozen_agent.to_metadata() for frozen_agent in self._runtime_rl.frozen_agents],
                 },
             },
             "market": market,
@@ -646,12 +755,13 @@ class LiveMarketSession:
             "news": recent_news,
             "portfolios": agents,
             "rl_diagnostics": rl_diagnostics,
+            "evaluation": self._final_evaluation_payload(),
         }
         self._latest_state = state
         return state
 
-    def _capture_state(self) -> dict[str, Any]:
-        state = self._build_state()
+    def _capture_state(self, *, full_history: bool = False) -> dict[str, Any]:
+        state = self._build_state(full_history=full_history)
         self._latest_state = state
         return state
 
@@ -689,6 +799,7 @@ class LiveMarketSession:
             self._first_event_timestamp = None
             self._last_event_timestamp = None
             self._max_news_severity = None
+            self._final_evaluation = None
             self._bootstrap_trackers()
             self._ingest_new_events()
             self.playing = False
@@ -726,6 +837,14 @@ class LiveMarketSession:
                     break
             return self.state()
 
+    def run_to_end(self) -> dict[str, Any]:
+        with self._lock:
+            self.playing = False
+            self._stop_event.set()
+            while self._advance_one_step():
+                pass
+            return self.state(full_history=True)
+
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
             with self._lock:
@@ -747,14 +866,14 @@ class LiveMarketSession:
             if not progressed or state_finished:
                 time.sleep(0.05)
                 continue
-            time.sleep(max(delay, 0.01))
+            time.sleep(max(delay, 0.001))
 
     def stop(self) -> None:
         with self._lock:
             self._shutdown_worker()
 
-    def state(self) -> dict[str, Any]:
+    def state(self, *, full_history: bool = False) -> dict[str, Any]:
         with self._lock:
-            state = self._capture_state()
+            state = self._capture_state(full_history=full_history)
             self.finished = bool(state["session"]["finished"])
             return state

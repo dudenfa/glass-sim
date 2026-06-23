@@ -10,11 +10,12 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from marl_trading.configs import available_preset_names
 from marl_trading.core.config import SimulationConfig
 from marl_trading.live.session import LiveMarketSession
+from marl_trading.rl.scenario import FrozenAgentSpec
 
 
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
@@ -34,6 +35,7 @@ class LiveServerConfig:
     checkpoint_path: Path | None = None
     learning_agent_id: str | None = None
     learning_agent_starting_inventory: float = 0.0
+    frozen_agents: tuple[FrozenAgentSpec, ...] = ()
     frozen_agent_checkpoint_path: Path | None = None
     frozen_agent_id: str | None = None
     frozen_agent_starting_inventory: float | None = None
@@ -80,7 +82,12 @@ class _MarketViewHandler(BaseHTTPRequestHandler):
             self._serve_file(STATIC_ROOT / "styles.css")
             return
         if path == "/api/state":
-            self._send_json(self._server().session.state())
+            query = parse_qs(parsed.query)
+            self._send_json(
+                self._server().session.state(
+                    full_history=query.get("history", [""])[0].lower() == "all",
+                )
+            )
             return
         if path == "/api/health":
             self._send_json({"ok": True})
@@ -108,6 +115,8 @@ class _MarketViewHandler(BaseHTTPRequestHandler):
             server.session.pause()
         elif action == "step":
             server.session.step(int(payload.get("steps", 1)))
+        elif action == "finish":
+            server.session.run_to_end()
         elif action == "reset":
             seed = payload.get("seed")
             horizon = payload.get("horizon")
@@ -147,6 +156,7 @@ class MarketViewServer:
             checkpoint_path=config.checkpoint_path,
             learning_agent_id=config.learning_agent_id,
             learning_agent_starting_inventory=config.learning_agent_starting_inventory,
+            frozen_agents=config.frozen_agents,
             frozen_agent_checkpoint_path=config.frozen_agent_checkpoint_path,
             frozen_agent_id=config.frozen_agent_id,
             frozen_agent_starting_inventory=config.frozen_agent_starting_inventory,
@@ -222,6 +232,16 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Starting inventory for the runtime-replaced PPO slot only.",
+    )
+    parser.add_argument(
+        "--frozen-agent",
+        action="append",
+        default=[],
+        metavar="AGENT_ID:CHECKPOINT[:TEMPLATE_ID[:STARTING_INVENTORY]]",
+        help=(
+            "Frozen PPO opponent spec. Repeat for multiple frozen agents. "
+            "Providing TEMPLATE_ID adds a new participant cloned from that scripted template."
+        ),
     )
     parser.add_argument(
         "--frozen-agent-checkpoint",

@@ -222,6 +222,7 @@ button {
 .book-panel,
 .trades-panel,
 .agents-panel,
+.evaluation-panel,
 .market-panel {
   padding: 12px;
   min-width: 0;
@@ -1180,6 +1181,100 @@ button {
   margin-bottom: 14px;
 }
 
+.evaluation-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.evaluation-table-wrap {
+  overflow-x: auto;
+  border: 1px solid rgba(164, 186, 215, 0.1);
+  border-radius: var(--radius-md);
+}
+
+.evaluation-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.evaluation-table th,
+.evaluation-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(164, 186, 215, 0.08);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.evaluation-table th {
+  color: var(--subtle);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.evaluation-table th:first-child,
+.evaluation-table td:first-child {
+  min-width: 170px;
+  text-align: left;
+}
+
+.evaluation-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.evaluation-table td:first-child strong,
+.evaluation-table td:first-child span {
+  display: block;
+}
+
+.evaluation-table td:first-child span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+  font-size: 0.74rem;
+}
+
+.evaluation-table .buy {
+  color: var(--buy);
+}
+
+.evaluation-table .sell {
+  color: var(--sell);
+}
+
+.evaluation-json {
+  margin-top: 12px;
+  border-top: 1px solid rgba(164, 186, 215, 0.1);
+  color: var(--muted);
+}
+
+.evaluation-json summary {
+  padding: 12px 0;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.84rem;
+}
+
+.evaluation-json pre {
+  max-height: 420px;
+  margin: 0 0 4px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: rgba(6, 11, 19, 0.62);
+  color: var(--muted);
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
 .summary-card {
   padding: 12px 14px;
   border-radius: var(--radius-md);
@@ -1467,6 +1562,10 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .evaluation-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .chart-title-row {
     flex-direction: column;
     align-items: flex-start;
@@ -1520,6 +1619,10 @@ button {
   }
 
   .agent-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .evaluation-summary {
     grid-template-columns: 1fr;
   }
 

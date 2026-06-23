@@ -134,6 +134,26 @@ def test_parse_args_accepts_frozen_agent_mode() -> None:
     assert args.frozen_agent_starting_inventory == 0.0
 
 
+def test_parse_args_accepts_repeated_frozen_agent_specs() -> None:
+    args = eval_rl_agent.parse_args(
+        [
+            "--checkpoint",
+            "model.zip",
+            "--frozen-agent",
+            "rl_01:checkpoints/rl_01.zip:trend_01:0",
+            "--frozen-agent",
+            "rl_02:checkpoints/rl_02.zip:trend_01:0",
+        ]
+    )
+
+    specs = eval_rl_agent.resolve_frozen_agent_specs(args)
+
+    assert [spec.agent_id for spec in specs] == ["rl_01", "rl_02"]
+    assert [spec.add_agent for spec in specs] == [True, True]
+    assert [spec.template_id for spec in specs] == ["trend_01", "trend_01"]
+    assert [spec.starting_inventory for spec in specs] == [0.0, 0.0]
+
+
 def test_normalize_checkpoint_load_path_strips_zip_suffix(tmp_path: Path) -> None:
     checkpoint = tmp_path / "ppo_test.zip"
 
@@ -387,3 +407,32 @@ def test_build_eval_config_can_add_learning_and_frozen_agents() -> None:
     assert horizon == config.market.event_horizon
     agent_ids = [agent.agent_id.value for agent in config.agents]
     assert agent_ids == ["maker_01", "retail_01", "informed_01", "trend_01", "rl_01", "rl_02"]
+
+
+def test_build_eval_config_can_add_two_frozen_agents_and_learning_agent() -> None:
+    config, horizon = eval_rl_agent.build_eval_config(
+        "baseline",
+        learning_agent_id="rl_03",
+        add_learning_agent=True,
+        learning_agent_template_id="trend_01",
+        frozen_agents=(
+            eval_rl_agent.FrozenAgentSpec(
+                agent_id="rl_01",
+                checkpoint_path="checkpoints/rl_01.zip",
+                add_agent=True,
+                template_id="trend_01",
+                starting_inventory=0.0,
+            ),
+            eval_rl_agent.FrozenAgentSpec(
+                agent_id="rl_02",
+                checkpoint_path="checkpoints/rl_02.zip",
+                add_agent=True,
+                template_id="trend_01",
+                starting_inventory=0.0,
+            ),
+        ),
+    )
+
+    assert horizon == config.market.event_horizon
+    agent_ids = [agent.agent_id.value for agent in config.agents]
+    assert agent_ids == ["maker_01", "retail_01", "informed_01", "trend_01", "rl_01", "rl_02", "rl_03"]

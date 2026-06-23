@@ -29,6 +29,7 @@
         <button class="control-btn" id="playButton" type="button">Play</button>
         <button class="control-btn" id="pauseButton" type="button">Pause</button>
         <button class="control-btn" id="stepButton" type="button">Step</button>
+        <button class="control-btn" id="endButton" type="button" aria-label="Run to end">End</button>
         <button class="control-btn" id="resetButton" type="button">Reset</button>
         <label class="speed-label" for="speedSelect">Speed</label>
         <select id="speedSelect" class="speed-select" aria-label="Simulation speed">
@@ -37,6 +38,11 @@
           <option value="2">2x</option>
           <option value="4">4x</option>
           <option value="8">8x</option>
+          <option value="16">16x</option>
+          <option value="32">32x</option>
+          <option value="64">64x</option>
+          <option value="128">128x</option>
+          <option value="256">256x</option>
         </select>
       </div>
     </header>
@@ -73,6 +79,8 @@
                 <span aria-hidden="true" class="toggle-icon toggle-line">─</span>
                 <span class="sr-only">Line</span>
               </button>
+              <button class="chip chart-range-toggle chip-active" id="chartRangeLatest" type="button" aria-label="Latest chart window">Latest</button>
+              <button class="chip chart-range-toggle" id="chartRangeAll" type="button" aria-label="Full run chart">Full</button>
             </div>
           </div>
 
@@ -130,6 +138,21 @@
             </div>
             <div id="agentPortfolios" class="portfolio-grid"></div>
           </div>
+        </section>
+
+        <section class="panel evaluation-panel" id="evaluationPanel" hidden>
+          <div class="panel-head compact">
+            <div>
+              <p class="panel-kicker">Completed run</p>
+              <h2>Evaluation</h2>
+            </div>
+          </div>
+          <div id="evaluationSummary" class="evaluation-summary"></div>
+          <div id="evaluationPortfolios" class="evaluation-portfolios"></div>
+          <details class="evaluation-json">
+            <summary>Full evaluation data</summary>
+            <pre id="evaluationJson"></pre>
+          </details>
         </section>
       </section>
     </main>

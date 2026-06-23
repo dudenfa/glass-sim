@@ -108,6 +108,26 @@ def test_live_server_cli_parses_frozen_agent_flags(monkeypatch) -> None:
     assert args.frozen_agent_starting_inventory == 0.0
 
 
+def test_live_server_cli_parses_repeated_frozen_agent_specs(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "serve_market_view.py",
+            "--frozen-agent",
+            "rl_01:checkpoints/rl_01.zip:trend_01:0",
+            "--frozen-agent",
+            "rl_02:checkpoints/rl_02.zip:trend_01:0",
+        ],
+    )
+    args = parse_args()
+
+    assert args.frozen_agent == [
+        "rl_01:checkpoints/rl_01.zip:trend_01:0",
+        "rl_02:checkpoints/rl_02.zip:trend_01:0",
+    ]
+
+
 def test_live_server_endpoints() -> None:
     try:
         server = serve_market_view(
@@ -141,6 +161,20 @@ def test_live_server_endpoints() -> None:
         with urlopen(request, timeout=5) as response:
             speed_state = json.loads(response.read().decode("utf-8"))
         assert speed_state["session"]["steps_per_second"] == 2.0
+
+        request = Request(
+            f"{base_url}/api/control",
+            data=json.dumps({"action": "finish"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request, timeout=5) as response:
+            finished = json.loads(response.read().decode("utf-8"))
+        assert finished["session"]["finished"] is True
+        assert finished["evaluation"] is not None
+
+        with urlopen(f"{base_url}/api/state?history=all", timeout=5) as response:
+            full_history = json.loads(response.read().decode("utf-8"))
+        assert len(full_history["history"]) == 11
     finally:
         server.stop()
 

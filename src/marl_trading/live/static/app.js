@@ -36,9 +36,15 @@ const els = {
   marketStats: document.getElementById("marketStats"),
   agentSummary: document.getElementById("agentSummary"),
   rlDiagnostics: document.getElementById("rlDiagnostics"),
+  evaluationPanel: document.getElementById("evaluationPanel"),
+  evaluationSummary: document.getElementById("evaluationSummary"),
+  evaluationPortfolios: document.getElementById("evaluationPortfolios"),
+  evaluationJson: document.getElementById("evaluationJson"),
   priceChart: document.getElementById("priceChart"),
   chartModeCandles: document.getElementById("chartModeCandles"),
   chartModeLine: document.getElementById("chartModeLine"),
+  chartRangeLatest: document.getElementById("chartRangeLatest"),
+  chartRangeAll: document.getElementById("chartRangeAll"),
   chartTimeframe: document.getElementById("chartTimeframe"),
   orderBookTop: document.getElementById("orderBookTop"),
   orderBookFull: document.getElementById("orderBookFull"),
@@ -49,6 +55,7 @@ const els = {
   playButton: document.getElementById("playButton"),
   pauseButton: document.getElementById("pauseButton"),
   stepButton: document.getElementById("stepButton"),
+  endButton: document.getElementById("endButton"),
   resetButton: document.getElementById("resetButton"),
   speedSelect: document.getElementById("speedSelect"),
 };
@@ -58,6 +65,8 @@ const state = {
   connected: false,
   autoplay: QUERY.get("autoplay") !== "0" && CONFIG.mode !== "paused",
   chartMode: "candles",
+  chartRange: "latest",
+  chartRangeTouched: false,
   chartTimeframe: CONFIG.defaultChartTimeframe,
   chartViewOffset: 0,
   backendStateUrl: null,
@@ -227,6 +236,7 @@ function snapshotRenderKey(snapshot) {
     Number.isFinite(market.spread) ? market.spread.toFixed(4) : "na",
     activeAgents,
     state.chartMode,
+    state.chartRange,
     state.chartTimeframe,
     state.chartViewOffset,
   ].join("|");
@@ -534,6 +544,10 @@ function buildSeriesForMode(snapshot) {
 
 function applyChartWindow(series, fundamentals) {
   const total = Math.max(series.length, fundamentals.length);
+  if (state.chartRange === "all") {
+    state.chartViewOffset = 0;
+    return { series, fundamentals, total };
+  }
   if (total <= CHART_WINDOW_SIZE) {
     state.chartViewOffset = 0;
     return { series, fundamentals, total };
@@ -555,8 +569,14 @@ function visibleSeriesForMode(snapshot) {
 }
 
 function getMaxChartViewOffset(snapshot) {
+  if (state.chartRange === "all") return 0;
   const built = buildSeriesForMode(snapshot);
   return Math.max(0, Math.max(built.series.length, built.fundamentals.length) - CHART_WINDOW_SIZE);
+}
+
+function chartSlotCount(series, fundamentals) {
+  const visibleCount = Math.max(series.length, fundamentals.length, 1);
+  return state.chartRange === "all" ? visibleCount : Math.max(CHART_WINDOW_SIZE, visibleCount);
 }
 
 function buildTradeVolumeByStep(snapshot) {
@@ -673,7 +693,7 @@ function resolveChartHoverIndex(snapshot, width, chartX) {
   if (!visibleSeries.length) return -1;
   const padding = CHART_LAYOUT.padding;
   const plotWidth = Math.max(1, width - padding.left - padding.right);
-  const xSlots = Math.max(CHART_WINDOW_SIZE, visibleSeries.length, fundamentals.length, 1);
+  const xSlots = chartSlotCount(visibleSeries, fundamentals);
   const xStep = plotWidth / Math.max(1, xSlots - 1);
   const xOffset = xSlots - visibleSeries.length;
   const rawIndex = Math.round((chartX - padding.left) / xStep - xOffset);
@@ -846,6 +866,8 @@ function normalizeBackendState(raw) {
     marketName: String(firstDefined(raw, ["market_name"], firstDefined(market, ["symbol", "name"], "Synthetic market"))),
     seed: Number(firstDefined(session, ["seed"], CONFIG.seed)),
     timestamp: Number(firstDefined(session, ["current_step_index", "step_index"], firstDefined(market, ["timestamp_ns", "timestamp"], 0))),
+    finished: Boolean(firstDefined(session, ["finished"], false)),
+    horizon: Number(firstDefined(session, ["horizon"], NaN)),
     midpoint,
     fundamental: Number(firstDefined(market, ["fundamental"], lineSeries.at(-1)?.fundamental ?? midpoint)),
     spread,
@@ -862,6 +884,7 @@ function normalizeBackendState(raw) {
     news,
     portfolios,
     rlDiagnostics,
+    evaluation: firstDefined(raw, ["evaluation"], null),
     stats: {
       activeAgents: Number(firstDefined(session, ["active_agent_count"], portfolios.filter((portfolio) => portfolio.active).length)),
       tradeCount: Number.isFinite(tradeCount) ? tradeCount : trades.length,
@@ -1185,6 +1208,8 @@ function setModeStatus(text) {
 function updateModeButtons() {
   els.chartModeCandles.classList.toggle("chip-active", state.chartMode === "candles");
   els.chartModeLine.classList.toggle("chip-active", state.chartMode === "line");
+  els.chartRangeLatest.classList.toggle("chip-active", state.chartRange === "latest");
+  els.chartRangeAll.classList.toggle("chip-active", state.chartRange === "all");
   if (els.chartTimeframe) {
     els.chartTimeframe.value = String(state.chartTimeframe);
   }
@@ -1217,13 +1242,15 @@ function drawChart(snapshot) {
   ctx.fillStyle = "#0b1018";
   ctx.fillRect(0, 0, width, height);
 
-  const candles = (snapshot.candles || []).slice(-CHART_WINDOW_SIZE);
-  const lineSeries = (snapshot.lineSeries || candles.map((candle, index) => ({
+  const chartSource = snapshot.candles || [];
+  const candles = state.chartRange === "all" ? chartSource : chartSource.slice(-CHART_WINDOW_SIZE);
+  const lineSource = snapshot.lineSeries || candles.map((candle, index) => ({
     step_index: candle.step_index ?? index,
     midpoint: candle.close,
     fundamental: candle.fundamental ?? snapshot.fundamental,
     volume: candle.volume,
-  }))).slice(-CHART_WINDOW_SIZE);
+  }));
+  const lineSeries = state.chartRange === "all" ? lineSource : lineSource.slice(-CHART_WINDOW_SIZE);
   const { series: visibleSeries, fundamentals } = visibleSeriesForMode(snapshot);
   const candleVolumeByStep = new Map(candles.map((candle, index) => [Number.isFinite(candle.step_index) ? candle.step_index : index, Number(candle.volume || 0)]));
   const values = [];
@@ -1255,7 +1282,7 @@ function drawChart(snapshot) {
   const volumeBandHeight = Math.max(64, Math.round(height * 0.18));
   const priceBottom = Math.max(padding.top + 1, height - padding.bottom - volumeBandHeight);
   const plotHeight = Math.max(1, priceBottom - padding.top);
-  const xSlots = Math.max(CHART_WINDOW_SIZE, visibleSeries.length, fundamentals.length, 1);
+  const xSlots = chartSlotCount(visibleSeries, fundamentals);
   const xStep = plotWidth / Math.max(1, xSlots - 1);
   const xOffset = xSlots - visibleSeries.length;
   const toY = (value) => padding.top + (1 - (value - minValue) / range) * plotHeight;
@@ -1276,7 +1303,8 @@ function drawChart(snapshot) {
     ctx.fillText(fmtNumber(price, 2), width - padding.right + 8, y + 4);
   }
 
-  for (let index = 0; index < visibleSeries.length; index += 12) {
+  const gridStride = Math.max(1, Math.ceil(visibleSeries.length / 8));
+  for (let index = 0; index < visibleSeries.length; index += gridStride) {
     const x = toX(index);
     ctx.beginPath();
     ctx.moveTo(x, padding.top);
@@ -1285,7 +1313,7 @@ function drawChart(snapshot) {
   }
 
   if (state.chartMode === "candles") {
-    const bodyWidth = Math.max(4, Math.min(12, xStep * 0.58));
+    const bodyWidth = Math.max(1, Math.min(12, xStep * 0.58));
     visibleSeries.forEach((candle, index) => {
       const x = toX(index);
       const openY = toY(candle.open);
@@ -1996,6 +2024,73 @@ function renderPortfolios(snapshot) {
   }).join("");
 }
 
+function renderEvaluation(snapshot) {
+  if (!els.evaluationPanel || !els.evaluationSummary || !els.evaluationPortfolios || !els.evaluationJson) return;
+  const evaluation = snapshot.evaluation;
+  if (!evaluation || !evaluation.summary || !Array.isArray(evaluation.portfolio_breakdown)) {
+    els.evaluationPanel.hidden = true;
+    els.evaluationSummary.innerHTML = "";
+    els.evaluationPortfolios.innerHTML = "";
+    els.evaluationJson.textContent = "";
+    return;
+  }
+
+  const summary = evaluation.summary;
+  const metricCards = [
+    { label: "Trades", value: fmtQty(summary.trade_count) },
+    { label: "Spread availability", value: `${fmtNumber(Number(summary.spread_availability_ratio) * 100, 1)}%` },
+    { label: "Mean spread", value: fmtNumber(summary.mean_spread, 4) },
+    { label: "Volatility", value: `${fmtNumber(summary.midpoint_return_volatility_bps, 2)} bps` },
+    { label: "Top-book liquidity", value: fmtNumber(summary.mean_top_of_book_liquidity, 2) },
+    { label: "Final midpoint", value: fmtNumber(summary.final_midpoint, 4) },
+    { label: "Final fundamental", value: fmtNumber(summary.final_fundamental, 4) },
+    { label: "Active agents", value: fmtNumber(summary.active_agent_mean, 2) },
+  ];
+  els.evaluationSummary.innerHTML = metricCards.map((metric) => `
+    <div class="summary-card">
+      <span>${escapeHtml(metric.label)}</span>
+      <strong>${escapeHtml(metric.value)}</strong>
+    </div>
+  `).join("");
+
+  const rows = [...evaluation.portfolio_breakdown].sort((left, right) => Number(right.ending_equity || 0) - Number(left.ending_equity || 0));
+  els.evaluationPortfolios.innerHTML = `
+    <div class="evaluation-table-wrap">
+      <table class="evaluation-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>PnL</th>
+            <th>Equity</th>
+            <th>End inv.</th>
+            <th>Max |inv.|</th>
+            <th>Max DD</th>
+            <th>Open orders</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => {
+            const pnl = Number(row.total_pnl);
+            return `
+              <tr>
+                <td><strong>${escapeHtml(String(row.agent_id || "—"))}</strong><span>${escapeHtml(String(row.agent_type || "unknown"))}</span></td>
+                <td class="${pnl >= 0 ? "buy" : "sell"}">${fmtSigned(pnl, 2)}</td>
+                <td>${fmtNumber(row.ending_equity, 2)}</td>
+                <td>${fmtQty(row.ending_inventory)}</td>
+                <td>${fmtQty(row.max_abs_inventory)}</td>
+                <td>${fmtNumber(row.max_equity_drawdown, 2)}</td>
+                <td>${fmtQty(row.open_orders)}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+  els.evaluationJson.textContent = JSON.stringify(evaluation, null, 2);
+  els.evaluationPanel.hidden = false;
+}
+
 function renderSnapshot(snapshot, { force = false } = {}) {
   const renderKey = snapshotRenderKey(snapshot);
   if (!force && state.lastRenderKey === renderKey && state.lastRenderMode === state.chartMode) {
@@ -2014,6 +2109,7 @@ function renderSnapshot(snapshot, { force = false } = {}) {
   renderRlDiagnostics(snapshot);
   renderActions(snapshot);
   renderPortfolios(snapshot);
+  renderEvaluation(snapshot);
   updateModeButtons();
   drawChart(snapshot);
   return true;
@@ -2052,13 +2148,19 @@ async function fetchJsonCandidates(urls, options = {}) {
 }
 
 function deriveControlUrl(stateUrl) {
-  if (stateUrl.endsWith("/api/live/state")) return stateUrl.replace("/api/live/state", "/api/live/control");
-  if (stateUrl.endsWith("/api/state")) return stateUrl.replace("/api/state", "/api/control");
+  const pathname = stateUrl.split("?", 1)[0];
+  if (pathname.endsWith("/api/live/state")) return pathname.replace("/api/live/state", "/api/live/control");
+  if (pathname.endsWith("/api/state")) return pathname.replace("/api/state", "/api/control");
   return ENDPOINTS.control[0] || null;
 }
 
+function stateUrlsForChartRange() {
+  if (state.chartRange !== "all") return ENDPOINTS.state;
+  return unique(ENDPOINTS.state.map((url) => `${url}${url.includes("?") ? "&" : "?"}history=all`));
+}
+
 async function loadBackendSnapshot() {
-  const { url, data } = await fetchJsonCandidates(ENDPOINTS.state);
+  const { url, data } = await fetchJsonCandidates(stateUrlsForChartRange());
   state.backendStateUrl = url;
   state.backendControlUrl = deriveControlUrl(url);
   return normalizeBackendState(data);
@@ -2146,7 +2248,19 @@ async function refreshBackend({ generation = state.loopGeneration, force = false
     state.lastError = null;
     setConnectionStatus("Connected", "live");
     setModeStatus("Backend live stream");
+    if (snapshot.finished && !state.chartRangeTouched) {
+      state.chartRange = "all";
+      if (state.chartTimeframe < 100) state.chartTimeframe = 100;
+    }
     renderSnapshot(snapshot, { force });
+    if (snapshot.finished) {
+      state.autoplay = false;
+      if (state.chartRange === "all" && !String(state.backendStateUrl || "").includes("history=all")) {
+        const fullSnapshot = await enqueueBackendRequest(() => loadBackendSnapshot());
+        renderSnapshot(fullSnapshot, { force: true });
+        return fullSnapshot;
+      }
+    }
     return snapshot;
   } catch (error) {
     if (generation !== state.loopGeneration) {
@@ -2211,10 +2325,27 @@ function setChartMode(mode) {
   }
 }
 
+async function setChartRange(range, { touched = true } = {}) {
+  state.chartRange = range;
+  state.chartRangeTouched = touched;
+  state.chartViewOffset = 0;
+  updateModeButtons();
+  if (backendAvailable()) {
+    await refreshBackend({ force: true });
+    return;
+  }
+  if (state.snapshot) {
+    renderChartPrice(state.snapshot);
+    drawChart(state.snapshot);
+  }
+}
+
 function bindEvents() {
   bindTradeContextTooltipEvents();
   els.chartModeCandles.addEventListener("click", () => setChartMode("candles"));
   els.chartModeLine.addEventListener("click", () => setChartMode("line"));
+  els.chartRangeLatest.addEventListener("click", () => void setChartRange("latest"));
+  els.chartRangeAll.addEventListener("click", () => void setChartRange("all"));
   els.chartTimeframe.addEventListener("change", () => {
     const next = Math.max(1, Number.parseInt(els.chartTimeframe.value || "5", 10));
     state.chartTimeframe = next;
@@ -2242,7 +2373,7 @@ function bindEvents() {
       const width = getChartWidthPx();
       const { series, fundamentals } = visibleSeriesForMode(state.snapshot);
       const plotWidth = Math.max(1, width - CHART_LAYOUT.padding.left - CHART_LAYOUT.padding.right);
-      const xSlots = Math.max(CHART_WINDOW_SIZE, series.length, fundamentals.length, 1);
+      const xSlots = chartSlotCount(series, fundamentals);
       const xStep = plotWidth / Math.max(1, xSlots - 1);
       const deltaSteps = Math.round((dragX - state.chartPan.x) / Math.max(1, xStep));
       const maxOffset = getMaxChartViewOffset(state.snapshot);
@@ -2314,8 +2445,29 @@ function bindEvents() {
     stepDemo();
   });
 
+  els.endButton.addEventListener("click", async () => {
+    stopPolling();
+    state.autoplay = false;
+    state.chartRange = "all";
+    state.chartRangeTouched = true;
+    state.chartViewOffset = 0;
+    if (state.chartTimeframe < 100) state.chartTimeframe = 100;
+    if (backendAvailable()) {
+      setModeStatus("Running to end");
+      await sendControl("finish");
+      await refreshBackend({ force: true });
+      return;
+    }
+    state.demoIndex = Math.max(0, state.demoWorld.timeline.length - 1);
+    renderSnapshot(demoSnapshotAt(state.demoIndex), { force: true });
+    setModeStatus("Demo complete");
+  });
+
   els.resetButton.addEventListener("click", async () => {
     state.autoplay = false;
+    state.chartRange = "latest";
+    state.chartRangeTouched = false;
+    state.chartViewOffset = 0;
     stopPolling();
     if (backendAvailable()) {
       await sendControl("reset");

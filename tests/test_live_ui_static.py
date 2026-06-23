@@ -23,6 +23,8 @@ def test_live_ui_shell_contains_compact_panels() -> None:
         "priceChart",
         "chartModeCandles",
         "chartModeLine",
+        "chartRangeLatest",
+        "chartRangeAll",
         "chartTimeframe",
         "orderBookTop",
         "orderBookFull",
@@ -32,8 +34,13 @@ def test_live_ui_shell_contains_compact_panels() -> None:
         "playButton",
         "pauseButton",
         "stepButton",
+        "endButton",
         "resetButton",
         "speedSelect",
+        "evaluationPanel",
+        "evaluationSummary",
+        "evaluationPortfolios",
+        "evaluationJson",
         "top-strip",
         "bottom-strip",
         "book-panel",
@@ -45,11 +52,15 @@ def test_live_ui_shell_contains_compact_panels() -> None:
     for label in [
         "Candles",
         "Line",
+        "Latest",
+        "Full",
         "RECENT TRADES",
         "Recent news",
         "Latest orders",
         "Capital map",
         "Participant cards",
+        "Completed run",
+        "Full evaluation data",
     ]:
         assert label in html
 
@@ -100,6 +111,11 @@ def test_live_ui_script_supports_live_polling_and_demo_fallback() -> None:
         "order-context",
         'seed: Number(firstDefined(session, ["seed"], CONFIG.seed))',
         "els.seedStatus.textContent",
+        "renderEvaluation",
+        "evaluation.portfolio_breakdown",
+        "stateUrlsForChartRange",
+        "setChartRange",
+        'sendControl("finish")',
     ]:
         assert token in js
 
@@ -157,6 +173,9 @@ def test_live_ui_styles_include_market_layout() -> None:
         ".chart-legend",
         ".agent-summary",
         ".portfolio-score",
+        ".evaluation-summary",
+        ".evaluation-table",
+        ".evaluation-json",
         ".feed-title",
         ".action-detail",
         ".scroll-panel",

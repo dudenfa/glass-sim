@@ -83,6 +83,11 @@ def test_cli_compares_json_reports(tmp_path, capsys) -> None:
     assert "maker_01" in output
 
 
+def test_resolve_source_reports_missing_json_path() -> None:
+    with pytest.raises(FileNotFoundError, match="Market run report not found"):
+        compare_script._resolve_source("artifacts/missing/run.json")
+
+
 def test_cli_compares_run_specs_via_health_builder(monkeypatch, capsys) -> None:
     calls: list[tuple[str, int | None, int | None]] = []
 

@@ -13,7 +13,7 @@ if str(REPO_ROOT) not in sys.path:
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from marl_trading.analysis import compare_market_runs, format_market_run_comparison, load_market_run
+from marl_trading.analysis import compare_market_runs, format_market_run_comparison
 from scripts.run_market_health import build_market_health_report
 
 
@@ -55,6 +55,8 @@ def _resolve_source(source: str) -> dict[str, object]:
         if not isinstance(data, dict):
             raise ValueError(f"JSON report at {path} must decode to an object.")
         return data
+    if path.suffix.lower() == ".json" or path.parent != Path("."):
+        raise FileNotFoundError(f"Market run report not found: {path}")
 
     spec = parse_run_spec(source)
     preset = spec["preset"]
