@@ -35,6 +35,7 @@ class LiveServerConfig:
     checkpoint_path: Path | None = None
     learning_agent_id: str | None = None
     learning_agent_starting_inventory: float = 0.0
+    hide_fundamental_from_rl: bool = False
     frozen_agents: tuple[FrozenAgentSpec, ...] = ()
     frozen_agent_checkpoint_path: Path | None = None
     frozen_agent_id: str | None = None
@@ -156,6 +157,7 @@ class MarketViewServer:
             checkpoint_path=config.checkpoint_path,
             learning_agent_id=config.learning_agent_id,
             learning_agent_starting_inventory=config.learning_agent_starting_inventory,
+            hide_fundamental_from_rl=config.hide_fundamental_from_rl,
             frozen_agents=config.frozen_agents,
             frozen_agent_checkpoint_path=config.frozen_agent_checkpoint_path,
             frozen_agent_id=config.frozen_agent_id,
@@ -212,6 +214,21 @@ def parse_args() -> argparse.Namespace:
         "--preserve-excluded-turn-slots",
         action="store_true",
         help="Keep excluded participants' scheduled turns as no-ops so surviving agents do not receive extra actions.",
+    )
+    parser.add_argument(
+        "--add-price-dumper",
+        action="store_true",
+        help="Append a test-only high-inventory scripted seller that submits random dump orders.",
+    )
+    parser.add_argument(
+        "--price-dumper-id",
+        default="dumper_01",
+        help="Runtime id for --add-price-dumper.",
+    )
+    parser.add_argument(
+        "--hide-fundamental-from-rl",
+        action="store_true",
+        help="Mask fundamental and fundamental-gap inputs for runtime PPO agents only.",
     )
     parser.add_argument("--seed", type=int, default=7, help="Simulation seed.")
     parser.add_argument("--horizon", type=int, default=10_000, help="Number of steps in the live demo session.")

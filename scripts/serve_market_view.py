@@ -13,6 +13,7 @@ from marl_trading.configs import build_preset_config
 from marl_trading.live.server import LiveServerConfig, parse_args, serve_market_view
 from marl_trading.rl.scenario import (
     build_frozen_agent_specs,
+    add_price_dumper_config,
     exclude_agents_from_config,
     prepare_frozen_agent_configs,
     prepare_learning_agent_config,
@@ -55,6 +56,11 @@ def main() -> None:
             add_learning_agent=bool(args.add_learning_agent),
             learning_agent_template_id=None if args.learning_agent_template_id is None else str(args.learning_agent_template_id),
         )
+    if args.add_price_dumper:
+        simulation_config = add_price_dumper_config(
+            simulation_config,
+            agent_id=str(args.price_dumper_id),
+        )
     server = serve_market_view(
         LiveServerConfig(
             host=args.host,
@@ -69,6 +75,7 @@ def main() -> None:
             checkpoint_path=checkpoint_path,
             learning_agent_id=learning_agent_id,
             learning_agent_starting_inventory=float(args.learning_agent_starting_inventory),
+            hide_fundamental_from_rl=bool(args.hide_fundamental_from_rl),
             frozen_agents=frozen_agent_specs,
             frozen_agent_checkpoint_path=None,
             frozen_agent_id=None,
@@ -95,6 +102,10 @@ def main() -> None:
         print("Excluded base-preset participant(s): " + ", ".join(args.exclude_agent))
     if args.preserve_excluded_turn_slots:
         print("Excluded participant turns are preserved as no-ops.")
+    if args.add_price_dumper:
+        print(f"Test-only price dumper enabled as '{args.price_dumper_id}' with 600 starting shares.")
+    if args.hide_fundamental_from_rl:
+        print("Runtime PPO agents receive zeroed fundamental and fundamental-gap features.")
     print("Use Ctrl+C to stop.")
     try:
         while True:

@@ -38,6 +38,7 @@ class _RuntimeRLConfig:
     checkpoint_path: Path | None
     learning_agent_id: str | None
     learning_agent_starting_inventory: float
+    hide_fundamental_from_rl: bool = False
     frozen_agents: tuple[FrozenAgentSpec, ...] = ()
     frozen_agent_checkpoint_path: Path | None = None
     frozen_agent_id: str | None = None
@@ -57,6 +58,7 @@ class LiveMarketSession:
         checkpoint_path: str | Path | None = None,
         learning_agent_id: str | None = None,
         learning_agent_starting_inventory: float = 0.0,
+        hide_fundamental_from_rl: bool = False,
         frozen_agents: tuple[FrozenAgentSpec, ...] = (),
         frozen_agent_checkpoint_path: str | Path | None = None,
         frozen_agent_id: str | None = None,
@@ -72,6 +74,7 @@ class LiveMarketSession:
             checkpoint_path=checkpoint_path,
             learning_agent_id=learning_agent_id,
             learning_agent_starting_inventory=learning_agent_starting_inventory,
+            hide_fundamental_from_rl=hide_fundamental_from_rl,
             frozen_agents=frozen_agents,
             frozen_agent_checkpoint_path=frozen_agent_checkpoint_path,
             frozen_agent_id=frozen_agent_id,
@@ -134,6 +137,7 @@ class LiveMarketSession:
         checkpoint_path: str | Path | None,
         learning_agent_id: str | None,
         learning_agent_starting_inventory: float,
+        hide_fundamental_from_rl: bool,
         frozen_agents: tuple[FrozenAgentSpec, ...],
         frozen_agent_checkpoint_path: str | Path | None,
         frozen_agent_id: str | None,
@@ -159,6 +163,7 @@ class LiveMarketSession:
             checkpoint_path=None if checkpoint_path is None else Path(checkpoint_path).expanduser().resolve(),
             learning_agent_id=agent_id or None,
             learning_agent_starting_inventory=float(learning_agent_starting_inventory),
+            hide_fundamental_from_rl=bool(hide_fundamental_from_rl),
             frozen_agents=frozen_agent_specs,
             frozen_agent_checkpoint_path=Path(frozen_agent_specs[0].checkpoint_path) if len(frozen_agent_specs) == 1 else None,
             frozen_agent_id=frozen_agent_specs[0].agent_id if len(frozen_agent_specs) == 1 else None,
@@ -170,6 +175,7 @@ class LiveMarketSession:
             checkpoint_path,
             device="cpu",
             deterministic=True,
+            hide_fundamental=bool(self._runtime_rl and self._runtime_rl.hide_fundamental_from_rl),
         )
         if adapter is None:
             raise RuntimeError(

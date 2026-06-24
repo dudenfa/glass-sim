@@ -363,6 +363,62 @@ def build_reward_metadata(
     }
 
 
+def build_agent_activity_summary(events: list[Any]) -> list[dict[str, Any]]:
+    """Summarize observable order submission and executed trade activity by agent."""
+    activity: dict[str, dict[str, Any]] = {}
+
+    def row_for(agent_id: object) -> dict[str, Any]:
+        resolved_id = str(agent_id)
+        return activity.setdefault(
+            resolved_id,
+            {
+                "agent_id": resolved_id,
+                "market_buy_orders": 0,
+                "market_sell_orders": 0,
+                "limit_buy_orders": 0,
+                "limit_sell_orders": 0,
+                "submitted_orders": 0,
+                "executed_buy_trades": 0,
+                "executed_sell_trades": 0,
+                "executed_buy_quantity": 0.0,
+                "executed_sell_quantity": 0.0,
+                "executed_quantity": 0.0,
+            },
+        )
+
+    for event in events:
+        event_type = getattr(getattr(event, "event_type", None), "value", getattr(event, "event_type", None))
+        side = getattr(getattr(event, "side", None), "value", getattr(event, "side", None))
+        if event_type in {"market_order", "limit_order"}:
+            agent_id = getattr(event, "agent_id", None)
+            if agent_id is None:
+                continue
+            row = row_for(agent_id)
+            row["submitted_orders"] += 1
+            if event_type == "market_order":
+                row["market_buy_orders" if side == "buy" else "market_sell_orders"] += 1
+            else:
+                row["limit_buy_orders" if side == "buy" else "limit_sell_orders"] += 1
+            continue
+        if event_type != "trade":
+            continue
+        payload = dict(getattr(event, "payload", {}) or {})
+        quantity = float(getattr(event, "quantity", 0.0) or 0.0)
+        buyer_id = payload.get("buy_agent_id")
+        seller_id = payload.get("sell_agent_id")
+        if buyer_id is not None:
+            row = row_for(buyer_id)
+            row["executed_buy_trades"] += 1
+            row["executed_buy_quantity"] += quantity
+            row["executed_quantity"] += quantity
+        if seller_id is not None:
+            row = row_for(seller_id)
+            row["executed_sell_trades"] += 1
+            row["executed_sell_quantity"] += quantity
+            row["executed_quantity"] += quantity
+    return [activity[agent_id] for agent_id in sorted(activity)]
+
+
 def build_rl_evaluation_payload(
     *,
     checkpoint_path: Path,
@@ -442,6 +498,7 @@ def build_rl_evaluation_payload(
         ]
     )
     serialized_rows = [row.to_dict() for row in portfolio_rows]
+    activity_summary = build_agent_activity_summary(list(result.event_log.events))
     reward_metadata = build_reward_metadata(
         reward_equity_delta_coefficient=reward_equity_delta_coefficient,
         reward_inactivity_penalty=reward_inactivity_penalty,
@@ -458,6 +515,7 @@ def build_rl_evaluation_payload(
         "summary": summary.to_dict(),
         "portfolio_breakdown": serialized_rows,
         "agents": serialized_rows,
+        "agent_activity": activity_summary,
         "metadata": {
             "mode": "rl_evaluation",
             "checkpoint": str(checkpoint_path.resolve()),
@@ -516,6 +574,7 @@ def _serialize_report(payload: dict[str, Any]) -> dict[str, Any]:
         "summary": summary,
         "portfolio_breakdown": portfolio_breakdown,
         "agents": portfolio_breakdown,
+        "agent_activity": list(payload.get("agent_activity", []) or []),
         "metadata": payload.get("metadata", {}),
     }
 

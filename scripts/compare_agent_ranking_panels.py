@@ -5,6 +5,7 @@ import html
 import json
 import sys
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,14 @@ AGENT_METRICS = (
     ("medianPnlPct", "Median PnL %", 2),
     ("meanDrawdown", "Mean drawdown", 2),
     ("meanMaxAbsInventory", "Mean max |inventory|", 2),
+)
+PAIRED_AGENT_METRICS = (
+    ("realizedPnl", "medianRealizedPnl"),
+    ("unrealizedPnl", "medianUnrealizedPnl"),
+    ("totalPnl", "medianTotalPnl"),
+    ("pnlPct", "medianPnlPct"),
+    ("maxDrawdown", "meanDrawdown"),
+    ("maxAbsInventory", "meanMaxAbsInventory"),
 )
 
 
@@ -80,8 +89,61 @@ def build_comparison_payload(baseline_dir: Path, treatment_dir: Path) -> dict[st
         "structures": structures,
         "agentRows": rows,
         "marketRows": market_rows,
+        "pairedAgentRows": _build_paired_agent_rows(baseline, treatment),
+        "pairedMarketRows": _build_paired_market_rows(baseline, treatment),
         "treatmentExcludedAgents": treatment["manifest"].get("excluded_agent_ids", []),
     }
+
+
+def _build_paired_agent_rows(baseline: dict[str, Any], treatment: dict[str, Any]) -> list[dict[str, Any]]:
+    baseline_rows = {
+        (row["structureId"], row["seed"], row["agentId"]): row
+        for row in baseline.get("rows", [])
+    }
+    treatment_rows = {
+        (row["structureId"], row["seed"], row["agentId"]): row
+        for row in treatment.get("rows", [])
+    }
+    grouped: dict[tuple[str, str], list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    for key in sorted(set(baseline_rows) & set(treatment_rows)):
+        structure_id, _seed, agent_id = key
+        grouped.setdefault((structure_id, agent_id), []).append((baseline_rows[key], treatment_rows[key]))
+
+    return [
+        {
+            "structureId": structure_id,
+            "structureLabel": baseline["labels"][structure_id],
+            "agentId": agent_id,
+            "runs": len(pairs),
+            "delta": {
+                aggregate_key: median(float(after[source_key]) - float(before[source_key]) for before, after in pairs)
+                for source_key, aggregate_key in PAIRED_AGENT_METRICS
+            },
+        }
+        for (structure_id, agent_id), pairs in grouped.items()
+    ]
+
+
+def _build_paired_market_rows(baseline: dict[str, Any], treatment: dict[str, Any]) -> list[dict[str, Any]]:
+    baseline_rows = {(row["structureId"], row["seed"]): row for row in baseline.get("marketRows", [])}
+    treatment_rows = {(row["structureId"], row["seed"]): row for row in treatment.get("marketRows", [])}
+    grouped: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    for key in sorted(set(baseline_rows) & set(treatment_rows)):
+        structure_id, _seed = key
+        grouped.setdefault(structure_id, []).append((baseline_rows[key], treatment_rows[key]))
+
+    return [
+        {
+            "structureId": structure_id,
+            "structureLabel": baseline["labels"][structure_id],
+            "runs": len(pairs),
+            "delta": {
+                key: median(float(after[key]) - float(before[key]) for before, after in pairs)
+                for key, _label, _digits in MARKET_COLUMNS
+            },
+        }
+        for structure_id, pairs in grouped.items()
+    ]
 
 
 def _format(value: float, digits: int = 2) -> str:
@@ -93,7 +155,8 @@ def _markdown(payload: dict[str, Any]) -> str:
     lines.append(f"- Paired seed count: `{payload['seedCount']}`")
     lines.append(f"- Baseline: `{payload['baselineLabel']}`")
     lines.append(f"- Treatment: `{payload['treatmentLabel']}`")
-    lines.append("- Values below are treatment-panel medians minus baseline-panel medians.")
+    lines.append("- The first table in each structure is treatment-panel medians minus baseline-panel medians.")
+    lines.append("- The paired tables are medians of same-seed treatment-minus-baseline differences.")
     lines.append("")
     for structure_id in payload["structures"]:
         rows = [row for row in payload["agentRows"] if row["structureId"] == structure_id]
@@ -113,6 +176,24 @@ def _markdown(payload: dict[str, Any]) -> str:
                     inventory=_format(delta["meanMaxAbsInventory"]),
                 )
             )
+        paired_rows = [row for row in payload["pairedAgentRows"] if row["structureId"] == structure_id]
+        if paired_rows:
+            lines.extend(["", "Paired seed-level median difference:", ""])
+            lines.append("| Agent | Realized PnL | Unrealized PnL | Total PnL | PnL % | Drawdown | Max |inventory| |")
+            lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+            for row in paired_rows:
+                delta = row["delta"]
+                lines.append(
+                    "| {agent} | {realized} | {unrealized} | {total} | {pct} | {drawdown} | {inventory} |".format(
+                        agent=row["agentId"],
+                        realized=_format(delta["medianRealizedPnl"]),
+                        unrealized=_format(delta["medianUnrealizedPnl"]),
+                        total=_format(delta["medianTotalPnl"]),
+                        pct=_format(delta["medianPnlPct"]),
+                        drawdown=_format(delta["meanDrawdown"]),
+                        inventory=_format(delta["meanMaxAbsInventory"]),
+                    )
+                )
         market = next(row for row in payload["marketRows"] if row["structureId"] == structure_id)
         lines.extend(["", "Market-quality delta:", ""])
         lines.append("| Trades | Spread availability | Mean spread | Volatility (bps) | Top-book liquidity | Final price |")
@@ -128,6 +209,25 @@ def _markdown(payload: dict[str, Any]) -> str:
             )
         )
         lines.append("")
+        paired_market = next(
+            (row for row in payload["pairedMarketRows"] if row["structureId"] == structure_id),
+            None,
+        )
+        if paired_market is not None:
+            lines.extend(["Paired seed-level median market-quality difference:", ""])
+            lines.append("| Trades | Spread availability | Mean spread | Volatility (bps) | Top-book liquidity | Final price |")
+            lines.append("| ---: | ---: | ---: | ---: | ---: | ---: |")
+            lines.append(
+                "| {trades} | {availability} | {spread} | {volatility} | {liquidity} | {price} |".format(
+                    trades=_format(paired_market["delta"]["trade_count"], 0),
+                    availability=_format(paired_market["delta"]["spread_availability_ratio"], 3),
+                    spread=_format(paired_market["delta"]["mean_spread"], 4),
+                    volatility=_format(paired_market["delta"]["midpoint_return_volatility_bps"], 2),
+                    liquidity=_format(paired_market["delta"]["mean_top_of_book_liquidity"], 2),
+                    price=_format(paired_market["delta"]["final_midpoint"], 2),
+                )
+            )
+            lines.append("")
     return "\n".join(lines)
 
 

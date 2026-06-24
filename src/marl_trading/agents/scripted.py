@@ -328,6 +328,67 @@ class NoiseTraderAgent(ScriptedAgent):
 
 
 @dataclass
+class PriceDumperAgent(ScriptedAgent):
+    """Test-only directional seller used to stress the market's price formation."""
+
+    market_sell_probability: float = 0.7
+    min_quantity: int = 3
+    max_quantity: int = 8
+    max_limit_discount_ticks: int = 8
+
+    def __init__(
+        self,
+        agent_id: str,
+        max_resting_orders: int = 4,
+        market_sell_probability: float = 0.7,
+        min_quantity: int = 3,
+        max_quantity: int = 8,
+        max_limit_discount_ticks: int = 8,
+    ) -> None:
+        super().__init__(agent_id=agent_id, agent_type="price_dumper", max_resting_orders=max_resting_orders)
+        self.market_sell_probability = min(max(float(market_sell_probability), 0.0), 1.0)
+        self.min_quantity = max(1, int(min_quantity))
+        self.max_quantity = max(self.min_quantity, int(max_quantity))
+        self.max_limit_discount_ticks = max(0, int(max_limit_discount_ticks))
+
+    def decide(self, observation: MarketObservation, rng) -> tuple[OrderIntent, ...]:
+        if not observation.portfolio_active or observation.agent_inventory < 1.0:
+            return ()
+
+        available_inventory = max(1, int(np.floor(observation.agent_inventory)))
+        upper_quantity = min(self.max_quantity, available_inventory)
+        lower_quantity = min(self.min_quantity, upper_quantity)
+        quantity = int(rng.integers(lower_quantity, upper_quantity + 1))
+
+        if observation.best_bid is not None and rng.random() < self.market_sell_probability:
+            return (
+                OrderIntent(
+                    side=Side.SELL,
+                    order_type=OrderType.MARKET,
+                    quantity=quantity,
+                    annotation="price_dump_market_sell",
+                ),
+            )
+
+        midpoint = _midpoint_or_fallback(observation)
+        anchor = observation.best_bid if observation.best_bid is not None else midpoint
+        discount_ticks = int(rng.integers(0, self.max_limit_discount_ticks + 1))
+        limit_price = _clamp_price(
+            max(observation.tick_size, anchor - discount_ticks * observation.tick_size),
+            observation.tick_size,
+        )
+        return (
+            OrderIntent(
+                side=Side.SELL,
+                order_type=OrderType.LIMIT,
+                quantity=quantity,
+                limit_price=limit_price,
+                annotation="price_dump_limit_sell",
+            ),
+        )
+
+
+@dataclass
 class TrendFollowerAgent(ScriptedAgent):
     threshold_bps: float = 1.5
     market_order_probability: float = 0.5

@@ -3,6 +3,7 @@ from .scripted import (
     InformedTraderAgent,
     MarketMakerAgent,
     NoiseTraderAgent,
+    PriceDumperAgent,
     TrendFollowerAgent,
 )
 
@@ -12,6 +13,7 @@ __all__ = [
     "MarketObservation",
     "NoiseTraderAgent",
     "OrderIntent",
+    "PriceDumperAgent",
     "ScriptedAgent",
     "TrendFollowerAgent",
 ]

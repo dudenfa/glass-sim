@@ -190,6 +190,7 @@ def build_ranking_payload(input_dir: Path) -> dict[str, Any]:
         "structureOrder": ordered_structure_ids,
         "labels": labels,
         "rows": rows,
+        "marketRows": market_rows,
         "structureLeaderboards": dict(structure_leaderboards),
         "overall": overall,
         "marketSummary": market_summary,

@@ -42,3 +42,21 @@ def test_panel_command_propagates_excluded_agent() -> None:
     )
 
     assert argv[-3:] == ["--exclude-agent", "informed_01", "--preserve-excluded-turn-slots"]
+
+
+def test_checkpoint_override_replaces_only_requested_agent_checkpoint(tmp_path) -> None:
+    replacement = tmp_path / "rl_03_v2.zip"
+
+    checkpoints = panel.resolve_checkpoint_overrides([f"rl_03={replacement}"])
+
+    assert checkpoints["rl_03"] == replacement.resolve()
+    assert checkpoints["rl_01"] == panel.DEFAULT_CHECKPOINTS["rl_01"]
+
+
+def test_checkpoint_override_requires_known_agent_id() -> None:
+    try:
+        panel.resolve_checkpoint_overrides(["unknown=checkpoints/unknown.zip"])
+    except KeyError as error:
+        assert "Unknown checkpoint override agent id" in str(error)
+    else:
+        raise AssertionError("Expected an unknown checkpoint override to fail.")

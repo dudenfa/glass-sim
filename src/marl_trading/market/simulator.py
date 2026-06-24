@@ -13,6 +13,7 @@ from marl_trading.agents import (
     MarketObservation,
     NoiseTraderAgent,
     OrderIntent,
+    PriceDumperAgent,
     ScriptedAgent,
     TrendFollowerAgent,
 )
@@ -155,6 +156,7 @@ class SyntheticMarketSimulator:
         inventory_map = {
             "market_maker": 40.0,
             "noise_trader": 20.0,
+            "price_dumper": 600.0,
             "trend_follower": 16.0,
             "informed_trader": 18.0,
         }
@@ -325,6 +327,11 @@ class SyntheticMarketSimulator:
             return MarketMakerAgent(**self._market_maker_kwargs(agent_cfg))
         if agent_cfg.agent_type == "noise_trader":
             return NoiseTraderAgent(**self._noise_trader_kwargs(agent_cfg))
+        if agent_cfg.agent_type == "price_dumper":
+            return PriceDumperAgent(
+                agent_id=agent_cfg.agent_id,
+                max_resting_orders=agent_cfg.max_resting_orders,
+            )
         if agent_cfg.agent_type == "trend_follower":
             return TrendFollowerAgent(**self._trend_follower_kwargs(agent_cfg))
         if agent_cfg.agent_type == "informed_trader":

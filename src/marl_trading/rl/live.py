@@ -103,15 +103,17 @@ class ModelPolicyAdapter:
         action_types: tuple[RLActionType, ...] = PHASE_A_ACTION_TYPE_ORDER,
         fixed_quantity: int = 1,
         fixed_price_offset_ticks: int = 1,
+        hide_fundamental: bool = False,
     ) -> None:
         self.predictor = predictor
         self.deterministic = bool(deterministic)
         self.action_types = tuple(action_types)
         self.fixed_quantity = max(int(fixed_quantity), 1)
         self.fixed_price_offset_ticks = max(int(fixed_price_offset_ticks), 1)
+        self.hide_fundamental = bool(hide_fundamental)
 
     def action_for(self, observation: MarketObservation) -> RuntimePolicyDecision:
-        features = feature_vector(observation)
+        features = feature_vector(observation, include_fundamental=not self.hide_fundamental)
         model_input = np.asarray(features, dtype=np.float32)
         action_mask = np.asarray(
             build_action_mask(
@@ -154,6 +156,7 @@ class PPOPolicyAdapter(ModelPolicyAdapter):
         action_types: tuple[RLActionType, ...] = PHASE_A_ACTION_TYPE_ORDER,
         fixed_quantity: int = 1,
         fixed_price_offset_ticks: int = 1,
+        hide_fundamental: bool = False,
     ) -> "PPOPolicyAdapter":
         resolved_path = Path(checkpoint_path).resolve()
         metadata = _checkpoint_sidecar_metadata(resolved_path)
@@ -181,6 +184,7 @@ class PPOPolicyAdapter(ModelPolicyAdapter):
             action_types=action_types,
             fixed_quantity=fixed_quantity,
             fixed_price_offset_ticks=fixed_price_offset_ticks,
+            hide_fundamental=hide_fundamental,
         )
 
     @classmethod
@@ -193,6 +197,7 @@ class PPOPolicyAdapter(ModelPolicyAdapter):
         action_types: tuple[RLActionType, ...] = PHASE_A_ACTION_TYPE_ORDER,
         fixed_quantity: int = 1,
         fixed_price_offset_ticks: int = 1,
+        hide_fundamental: bool = False,
     ) -> tuple["PPOPolicyAdapter | None", PolicyLoadStatus]:
         path = Path(checkpoint_path).resolve()
         if not path.exists():
@@ -205,6 +210,7 @@ class PPOPolicyAdapter(ModelPolicyAdapter):
                 action_types=action_types,
                 fixed_quantity=fixed_quantity,
                 fixed_price_offset_ticks=fixed_price_offset_ticks,
+                hide_fundamental=hide_fundamental,
             )
         except ImportError:
             return None, PolicyLoadStatus(

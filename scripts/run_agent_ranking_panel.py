@@ -5,7 +5,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -75,6 +75,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rl-inventory", type=float, default=16.0)
     parser.add_argument("--exclude-agent", action="append", default=[], metavar="AGENT_ID")
     parser.add_argument("--preserve-excluded-turn-slots", action="store_true")
+    parser.add_argument(
+        "--checkpoint-override",
+        action="append",
+        default=[],
+        metavar="AGENT_ID=PATH",
+        help="Override a default learned-agent checkpoint for this panel. Repeat as needed.",
+    )
     parser.add_argument("--skip-existing", action="store_true")
     return parser
 
@@ -86,15 +93,17 @@ def _eval_argv(
     horizon: int,
     preset: str,
     rl_inventory: float,
+    checkpoints: Mapping[str, Path] | None = None,
     excluded_agent_ids: tuple[str, ...] = (),
     preserve_excluded_turn_slots: bool = False,
 ) -> list[str]:
     if spec.learning_agent_id is None:
         raise ValueError("Scripted-only structure has no RL evaluation command.")
+    resolved_checkpoints = DEFAULT_CHECKPOINTS if checkpoints is None else checkpoints
     learning_agent_id = spec.learning_agent_id
     argv = [
         "--checkpoint",
-        str(DEFAULT_CHECKPOINTS[learning_agent_id]),
+        str(resolved_checkpoints[learning_agent_id]),
         "--preset",
         preset,
         "--seed",
@@ -113,7 +122,7 @@ def _eval_argv(
         argv.extend(
             [
                 "--frozen-agent",
-                f"{frozen_agent_id}:{DEFAULT_CHECKPOINTS[frozen_agent_id]}:trend_01:{rl_inventory}",
+                f"{frozen_agent_id}:{resolved_checkpoints[frozen_agent_id]}:trend_01:{rl_inventory}",
             ]
         )
     for excluded_agent_id in excluded_agent_ids:
@@ -130,6 +139,7 @@ def build_structure_report(
     horizon: int,
     preset: str,
     rl_inventory: float,
+    checkpoints: Mapping[str, Path] | None = None,
     excluded_agent_ids: tuple[str, ...] = (),
     preserve_excluded_turn_slots: bool = False,
 ) -> dict[str, Any]:
@@ -152,6 +162,7 @@ def build_structure_report(
                 horizon=horizon,
                 preset=preset,
                 rl_inventory=rl_inventory,
+                checkpoints=checkpoints,
                 excluded_agent_ids=excluded_agent_ids,
                 preserve_excluded_turn_slots=preserve_excluded_turn_slots,
             )
@@ -181,11 +192,13 @@ def run_panel(
     horizon: int,
     preset: str,
     rl_inventory: float,
+    checkpoints: Mapping[str, Path] | None = None,
     excluded_agent_ids: tuple[str, ...] = (),
     preserve_excluded_turn_slots: bool = False,
     skip_existing: bool = False,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    resolved_checkpoints = DEFAULT_CHECKPOINTS if checkpoints is None else checkpoints
     written: list[Path] = []
     total = len(STRUCTURES) * len(seeds)
     completed = 0
@@ -204,6 +217,7 @@ def run_panel(
                 horizon=horizon,
                 preset=preset,
                 rl_inventory=rl_inventory,
+                checkpoints=resolved_checkpoints,
                 excluded_agent_ids=excluded_agent_ids,
                 preserve_excluded_turn_slots=preserve_excluded_turn_slots,
             )
@@ -214,6 +228,7 @@ def run_panel(
         "horizon": int(horizon),
         "seeds": list(seeds),
         "rl_starting_inventory": float(rl_inventory),
+        "checkpoints": {agent_id: str(path) for agent_id, path in resolved_checkpoints.items()},
         "excluded_agent_ids": list(excluded_agent_ids),
         "preserve_excluded_turn_slots": bool(preserve_excluded_turn_slots),
         "structures": [
@@ -231,9 +246,24 @@ def run_panel(
     return written
 
 
+def resolve_checkpoint_overrides(raw_overrides: list[str]) -> dict[str, Path]:
+    resolved = dict(DEFAULT_CHECKPOINTS)
+    for raw_override in raw_overrides:
+        if "=" not in raw_override:
+            raise ValueError("Checkpoint overrides must use AGENT_ID=PATH.")
+        agent_id, raw_path = raw_override.split("=", 1)
+        if agent_id not in resolved:
+            raise KeyError(f"Unknown checkpoint override agent id: {agent_id}")
+        if not raw_path:
+            raise ValueError(f"Checkpoint override for {agent_id} has no path.")
+        resolved[agent_id] = Path(raw_path).expanduser().resolve()
+    return resolved
+
+
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
-    for checkpoint in DEFAULT_CHECKPOINTS.values():
+    checkpoints = resolve_checkpoint_overrides(list(args.checkpoint_override or ()))
+    for checkpoint in checkpoints.values():
         if not checkpoint.exists():
             raise FileNotFoundError(f"Required checkpoint not found: {checkpoint}")
     written = run_panel(
@@ -242,6 +272,7 @@ def main(argv: list[str] | None = None) -> None:
         horizon=int(args.horizon),
         preset=str(args.preset),
         rl_inventory=float(args.rl_inventory),
+        checkpoints=checkpoints,
         excluded_agent_ids=tuple(args.exclude_agent or ()),
         preserve_excluded_turn_slots=bool(args.preserve_excluded_turn_slots),
         skip_existing=bool(args.skip_existing),

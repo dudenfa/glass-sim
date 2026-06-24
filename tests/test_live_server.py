@@ -96,6 +96,27 @@ def test_live_server_cli_parses_excluded_agent(monkeypatch) -> None:
     assert args.preserve_excluded_turn_slots is True
 
 
+def test_live_server_cli_parses_price_dumper_flags(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["serve_market_view.py", "--add-price-dumper", "--price-dumper-id", "dump_test"],
+    )
+
+    args = parse_args()
+
+    assert args.add_price_dumper is True
+    assert args.price_dumper_id == "dump_test"
+
+
+def test_live_server_cli_parses_fundamental_mask_flag(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["serve_market_view.py", "--hide-fundamental-from-rl"])
+
+    args = parse_args()
+
+    assert args.hide_fundamental_from_rl is True
+
+
 def test_live_server_cli_parses_frozen_agent_flags(monkeypatch) -> None:
     monkeypatch.setattr(
         sys,

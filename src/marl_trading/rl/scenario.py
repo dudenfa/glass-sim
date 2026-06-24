@@ -154,6 +154,35 @@ def prepare_learning_agent_config(
     )
 
 
+def add_price_dumper_config(
+    config: SimulationConfig,
+    *,
+    agent_id: str = "dumper_01",
+) -> SimulationConfig:
+    """Append an opt-in scripted seller for live market-stress demonstrations."""
+    resolved_agent_id = str(agent_id).strip()
+    if not resolved_agent_id:
+        raise ValueError("price dumper agent id must be a non-empty string.")
+    existing_ids = {agent.agent_id.value for agent in config.agents}
+    if resolved_agent_id in existing_ids:
+        raise ValueError(f"Price dumper agent id already exists: {resolved_agent_id}")
+    dumper = AgentConfig(
+        agent_id=AgentId(resolved_agent_id),
+        agent_type="price_dumper",
+        starting_cash=10_000.0,
+        ruin_threshold=4_000.0,
+        max_resting_orders=4,
+    )
+    turn_schedule_agent_ids = config.turn_schedule_agent_ids
+    if turn_schedule_agent_ids is not None:
+        turn_schedule_agent_ids = (*turn_schedule_agent_ids, resolved_agent_id)
+    return replace(
+        config,
+        agents=(*config.agents, dumper),
+        turn_schedule_agent_ids=turn_schedule_agent_ids,
+    )
+
+
 def exclude_agents_from_config(
     config: SimulationConfig,
     *,

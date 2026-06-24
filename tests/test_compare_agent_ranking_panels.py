@@ -20,6 +20,31 @@ def _payload(*, total_pnl: float, trade_count: float) -> dict[str, object]:
         "structureOrder": ["s1_rl01"],
         "labels": {"s1_rl01": "S1: scripted + rl_01"},
         "structureLeaderboards": {"s1_rl01": [leaderboard_row]},
+        "rows": [
+            {
+                "structureId": "s1_rl01",
+                "seed": 31,
+                "agentId": "rl_01",
+                "realizedPnl": total_pnl - 1.0,
+                "unrealizedPnl": 1.0,
+                "totalPnl": total_pnl,
+                "pnlPct": total_pnl / 100.0,
+                "maxDrawdown": 3.0,
+                "maxAbsInventory": 4.0,
+            }
+        ],
+        "marketRows": [
+            {
+                "structureId": "s1_rl01",
+                "seed": 31,
+                "trade_count": trade_count,
+                "spread_availability_ratio": 0.4,
+                "mean_spread": 0.1,
+                "midpoint_return_volatility_bps": 10.0,
+                "mean_top_of_book_liquidity": 3.0,
+                "final_midpoint": 100.0,
+            }
+        ],
         "marketSummary": [
             {
                 "structureId": "s1_rl01",
@@ -43,6 +68,8 @@ def test_comparison_payload_reports_treatment_minus_baseline(monkeypatch, tmp_pa
 
     assert result["agentRows"][0]["delta"]["medianTotalPnl"] == 40.0
     assert result["marketRows"][0]["delta"]["trade_count"] == 5.0
+    assert result["pairedAgentRows"][0]["delta"]["medianTotalPnl"] == 40.0
+    assert result["pairedMarketRows"][0]["delta"]["trade_count"] == 5.0
     result.update(
         {
             "title": "Test Comparison",

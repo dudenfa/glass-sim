@@ -74,8 +74,15 @@ def observation_to_feature_dict(observation: MarketObservation) -> dict[str, flo
     }
 
 
-def feature_vector(observation: MarketObservation) -> tuple[float, ...]:
+def feature_vector(
+    observation: MarketObservation,
+    *,
+    include_fundamental: bool = True,
+) -> tuple[float, ...]:
     features = observation_to_feature_dict(observation)
+    if not include_fundamental:
+        features["fundamental"] = 0.0
+        features["fundamental_gap"] = 0.0
     return tuple(features[key] for key in (
         "best_bid",
         "best_ask",

@@ -392,6 +392,19 @@ def test_runtime_policy_agent_maps_policy_prediction_to_order_intent() -> None:
     assert agent.last_decision.rl_action.action_type is RLActionType.LIMIT_BUY
 
 
+def test_model_policy_adapter_can_mask_fundamental_features() -> None:
+    obs = _observation()
+
+    class _FakePredictor:
+        def predict(self, observation, deterministic: bool = True):  # noqa: ARG002
+            return [0], None
+
+    decision = ModelPolicyAdapter(_FakePredictor(), hide_fundamental=True).action_for(obs)
+
+    assert len(decision.features) == 18
+    assert decision.features[6:8] == (0.0, 0.0)
+
+
 def test_runtime_policy_agent_masks_invalid_sell_and_reports_reason() -> None:
     obs = _observation(agent_inventory=0.0, open_orders=0)
 
