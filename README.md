@@ -1,15 +1,37 @@
 # marl-trading
 
-Synthetic one-asset market simulation for a university thesis on multi-agent reinforcement learning in trading.
+Multi-agent market simulation for a university thesis on reinforcement learning in trading.
 
-The current repo contains the first public prototype:
-- a spot-only synthetic market
-- a central limit order book
-- heterogeneous scripted agents
-- a live local market viewer
-- replay and analysis utilities
+The repository now contains two simulators:
 
-This project is the MARL continuation of the earlier thesis work in `../algo-trading-drl`.
+- **`marl_trading.futures` (new, on branch `transparent-futures`)**: a transparent
+  perpetual-futures exchange for AI trading agents. Agents trade long and short
+  with leverage and margin, pay funding, and get liquidated, in a market whose
+  transparency (anonymous, attributed, or fully public positions like
+  Hyperliquid) is an experimental setting. It comes with nine scripted trader
+  types, a live browser viewer, and a hook for RL agents.
+  See **[docs/futures/README.md](docs/futures/README.md)**.
+- **The original spot market** (`marl_trading.market`, `marl_trading.rl`,
+  `marl_trading.marl`): the one-asset spot ecology used for the RL and MARL
+  thesis experiments, frozen at tag `v0.1-spot-thesis`.
+
+### Futures market in 30 seconds
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev,analysis]"
+perpsim run --scenario default --seed 1        # 4 simulated hours, ~5 s
+perpsim serve --open                           # live viewer on http://127.0.0.1:8766
+```
+
+```python
+from marl_trading.futures import PerpetualMarket, scenarios
+
+result = PerpetualMarket(scenarios.default(seed=1)).run()
+result.print_report()
+```
+
+The rest of this README describes the original spot-market code.
 
 ## Current Focus
 

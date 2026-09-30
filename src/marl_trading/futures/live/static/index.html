@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Perp Market Viewer</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">◆</div>
+      <div>
+        <div class="symbol" id="symbol">SYNTH-PERP</div>
+        <div class="subtitle">Transparent perpetual futures · simulated market</div>
+      </div>
+    </div>
+    <div class="ticker" id="ticker">
+      <div class="tick big"><span class="label">Last</span><span class="value" id="t-last">—</span><span class="delta" id="t-change">—</span></div>
+      <div class="tick"><span class="label">Mark</span><span class="value" id="t-mark">—</span></div>
+      <div class="tick"><span class="label">Index (oracle)</span><span class="value" id="t-index">—</span></div>
+      <div class="tick"><span class="label">Spread</span><span class="value" id="t-spread">—</span></div>
+      <div class="tick"><span class="label">Funding / countdown</span><span class="value" id="t-funding">—</span></div>
+      <div class="tick"><span class="label">Open interest</span><span class="value" id="t-oi">—</span></div>
+      <div class="tick"><span class="label">Volume</span><span class="value" id="t-volume">—</span></div>
+      <div class="tick"><span class="label">Liquidations</span><span class="value" id="t-liqs">—</span></div>
+      <div class="tick"><span class="label">Insurance fund</span><span class="value" id="t-insurance">—</span></div>
+      <div class="tick"><span class="label">Active agents</span><span class="value" id="t-active">—</span></div>
+    </div>
+  </header>
+
+  <section class="controls">
+    <div class="group">
+      <button id="btn-play" class="primary">▶ Play</button>
+      <button id="btn-step" title="Advance 10 simulated seconds">+10s</button>
+      <button id="btn-step60" title="Advance 60 simulated seconds">+1m</button>
+      <button id="btn-end" title="Run to the end of the session">End ⏭</button>
+      <label>Speed
+        <select id="speed">
+          <option value="1">1×</option><option value="5">5×</option><option value="10">10×</option>
+          <option value="30">30×</option><option value="60">60×</option><option value="120">120×</option>
+          <option value="300">300×</option><option value="900">900×</option>
+        </select>
+      </label>
+    </div>
+    <div class="clock">
+      <span id="clock">00:00:00</span>
+      <div class="progress"><div id="progress-bar"></div></div>
+      <span class="muted" id="duration">/ 04:00:00</span>
+    </div>
+    <div class="group">
+      <label>Scenario <select id="scenario"></select></label>
+      <label>Agents see
+        <select id="transparency">
+          <option value="full">Full (Hyperliquid-like)</option>
+          <option value="attributed">Attributed (owners only)</option>
+          <option value="anonymous">Anonymous (classic exchange)</option>
+        </select>
+      </label>
+      <label>Seed <input id="seed" type="number" value="1" min="0"></label>
+      <button id="btn-reset">↺ New session</button>
+    </div>
+  </section>
+
+  <main class="grid">
+    <section class="panel chart-panel">
+      <div class="panel-head">
+        <div class="tabs small" id="timeframes">
+          <button data-tf="1">1s</button><button data-tf="5">5s</button><button data-tf="15" class="active">15s</button>
+          <button data-tf="60">1m</button><button data-tf="300">5m</button><button data-tf="900">15m</button>
+        </div>
+        <div class="legend">
+          <label><input type="checkbox" id="show-mark" checked><span class="swatch mark"></span>Mark</label>
+          <label><input type="checkbox" id="show-index" checked><span class="swatch index"></span>Index</label>
+          <label><input type="checkbox" id="show-liqs" checked><span class="swatch liq"></span>Liquidations</label>
+          <label><input type="checkbox" id="show-news" checked><span class="swatch news"></span>News</label>
+          <button id="btn-live" class="ghost" title="Jump back to the latest candles">Live ⟶</button>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="chart"></canvas><div class="chart-tip" id="chart-tip"></div></div>
+    </section>
+
+    <section class="panel book-panel">
+      <div class="panel-head"><span>Order book</span><span class="muted small" id="book-note">owners shown as dots</span></div>
+      <div class="book-cols"><span>Price</span><span>Size</span><span>Total</span><span>Owners</span></div>
+      <div class="book" id="book-asks"></div>
+      <div class="book-mid" id="book-mid">—</div>
+      <div class="book" id="book-bids"></div>
+    </section>
+
+    <section class="panel trades-panel">
+      <div class="panel-head"><span>Trades</span><span class="muted small">buyer ← seller</span></div>
+      <div class="trade-cols"><span>Time</span><span>Price</span><span>Size</span><span>Buyer ← Seller</span></div>
+      <div class="trades" id="trades"></div>
+    </section>
+  </main>
+
+  <section class="panel bottom">
+    <div class="tabs" id="bottom-tabs">
+      <button data-tab="positions" class="active">Positions</button>
+      <button data-tab="groups">Participants</button>
+      <button data-tab="liquidations">Liquidations <span class="badge" id="badge-liqs">0</span></button>
+      <button data-tab="funding">Funding</button>
+      <button data-tab="news">News</button>
+      <button data-tab="orders">Order flow</button>
+      <button data-tab="quality">Market quality</button>
+      <button data-tab="about">How it works</button>
+    </div>
+
+    <div class="tab-body" data-body="positions">
+      <div class="table-tools">
+        <label>Type <select id="filter-type"><option value="">all</option></select></label>
+        <label><input type="checkbox" id="filter-open"> open positions only</label>
+        <span class="muted small" id="positions-visibility"></span>
+      </div>
+      <div class="table-scroll"><table id="positions-table"></table></div>
+    </div>
+    <div class="tab-body hidden" data-body="groups"><div class="table-scroll"><table id="groups-table"></table></div></div>
+    <div class="tab-body hidden" data-body="liquidations"><div class="table-scroll"><table id="liquidations-table"></table></div></div>
+    <div class="tab-body hidden" data-body="funding"><div class="funding-now" id="funding-now"></div><div class="table-scroll"><table id="funding-table"></table></div></div>
+    <div class="tab-body hidden" data-body="news"><div class="table-scroll"><table id="news-table"></table></div></div>
+    <div class="tab-body hidden" data-body="orders"><div class="table-scroll"><table id="orders-table"></table></div></div>
+    <div class="tab-body hidden" data-body="quality"><div class="quality" id="quality"></div></div>
+    <div class="tab-body hidden" data-body="about"><div class="about" id="about"></div></div>
+  </section>
+
+  <aside class="drawer hidden" id="drawer">
+    <div class="drawer-head">
+      <div><div class="drawer-title" id="drawer-title">—</div><div class="muted small" id="drawer-sub">—</div></div>
+      <button class="ghost" id="drawer-close">✕</button>
+    </div>
+    <div class="drawer-stats" id="drawer-stats"></div>
+    <div class="drawer-section"><div class="section-title">Equity</div><canvas id="spark-equity" height="90"></canvas></div>
+    <div class="drawer-section"><div class="section-title">Position</div><canvas id="spark-position" height="70"></canvas></div>
+    <div class="drawer-section"><div class="section-title">Strategy parameters</div><div id="drawer-params" class="params"></div></div>
+    <div class="drawer-section"><div class="section-title">Open orders</div><table id="drawer-orders"></table></div>
+    <div class="drawer-section"><div class="section-title">Recent fills</div><table id="drawer-fills"></table></div>
+  </aside>
+
+  <div class="tooltip hidden" id="tooltip"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

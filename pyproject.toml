@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "marl-trading"
 version = "0.1.0"
-description = "Synthetic market simulation and MARL thesis scaffold"
+description = "Multi-agent market simulation: a transparent perpetual-futures exchange for AI trading agents, plus the original spot-market MARL thesis code"
 readme = "THESIS.md"
 requires-python = ">=3.9"
 license = {text = "Proprietary"}
@@ -17,14 +17,22 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+analysis = ["pandas>=2.0"]
 rl = [
     "gymnasium>=0.29,<1.0",
     "stable-baselines3>=2.3,<3.0",
     "sb3-contrib>=2.3,<3.0",
 ]
 
+[project.scripts]
+perpsim = "marl_trading.futures.__main__:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+"marl_trading.futures.live" = ["static/*"]
+"marl_trading.live" = ["static/*"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
