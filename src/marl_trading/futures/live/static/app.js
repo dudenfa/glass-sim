@@ -13,6 +13,7 @@ const TYPE_COLORS = {
   flow_follower: "#fb7185",
   liquidation_hunter: "#f6465d",
   external: "#ffffff",
+  rl_agent: "#ffffff",
 };
 const TYPE_LABELS = {
   market_maker: "Market maker",
@@ -25,6 +26,7 @@ const TYPE_LABELS = {
   flow_follower: "Flow follower",
   liquidation_hunter: "Liquidation hunter",
   external: "External / RL",
+  rl_agent: "RL agent",
 };
 const TYPE_DESCRIPTIONS = {
   market_maker: "Posts multi-level buy and sell quotes around a fair price (book mid blended with the index). Widens with volatility and after news, and skews quotes to shed inventory. Earns the spread, loses to informed flow.",
@@ -37,6 +39,7 @@ const TYPE_DESCRIPTIONS = {
   copy_trader: "Needs FULL transparency. Mirrors the direction of the most profitable visible account that is taking leveraged directional risk.",
   liquidation_hunter: "Needs FULL transparency. Scans public liquidation prices; when the positions that would be force-closed outweigh the cost of walking the book there, it pushes the price into the cluster and rests its exit where the forced orders arrive.",
   external: "Controlled from outside the simulator, e.g. by a reinforcement-learning policy.",
+  rl_agent: "A trained reinforcement-learning policy (MaskablePPO). It sees a 32-number summary of the market and its own account, and picks one of 9 actions every ~5 s.",
 };
 
 const S = {
@@ -56,6 +59,7 @@ const S = {
   drawerId: null,
   drawerFetched: 0,
   controlsInit: false,
+  pendingSession: false,
   aboutTransparency: null,
 };
 
@@ -200,9 +204,14 @@ function renderControls(st) {
     sel.innerHTML = s.scenarios.map((n) => `<option value="${n}">${n}</option>`).join("");
     S.controlsInit = true;
   }
-  if (document.activeElement !== $("scenario")) $("scenario").value = s.scenario;
-  if (document.activeElement !== $("transparency")) $("transparency").value = s.transparency;
-  if (document.activeElement !== $("seed")) $("seed").value = s.seed;
+  // Session settings the user has edited stay as typed until "New session" applies them.
+  if (!S.pendingSession) {
+    $("scenario").value = s.scenario;
+    $("transparency").value = s.transparency;
+    $("seed").value = s.seed;
+  }
+  $("btn-reset").classList.toggle("primary", S.pendingSession);
+  $("btn-reset").textContent = S.pendingSession ? "↺ Start new session" : "↺ New session";
   if (document.activeElement !== $("speed")) $("speed").value = String(s.speed);
   const note = {
     full: "agents see owners, positions and liquidation prices",
@@ -788,7 +797,16 @@ function setup() {
   $("btn-step60").addEventListener("click", () => control("step", { seconds: 60 }));
   $("btn-end").addEventListener("click", () => control("finish"));
   $("speed").addEventListener("change", (e) => control("speed", { speed: Number(e.target.value) }));
-  $("btn-reset").addEventListener("click", () => control("reset", { scenario: $("scenario").value, transparency: $("transparency").value, seed: Number($("seed").value) }));
+  const startSession = () => {
+    S.pendingSession = false;
+    control("reset", { scenario: $("scenario").value, transparency: $("transparency").value, seed: Number($("seed").value) });
+  };
+  $("btn-reset").addEventListener("click", startSession);
+  for (const id of ["scenario", "transparency", "seed"]) {
+    $(id).addEventListener("input", () => { S.pendingSession = true; renderControls(S.state); });
+    $(id).addEventListener("change", () => { S.pendingSession = true; renderControls(S.state); });
+  }
+  $("seed").addEventListener("keydown", (e) => { if (e.key === "Enter") startSession(); });
   document.querySelectorAll("#bottom-tabs button").forEach((b) => b.addEventListener("click", () => {
     document.querySelectorAll("#bottom-tabs button").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");

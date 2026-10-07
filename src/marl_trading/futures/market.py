@@ -482,6 +482,10 @@ class PerpetualMarket:
         n = max(1, int(seconds / self.config.record_interval))
         return list(self._mark_samples)[-n:]
 
+    def recent_open_interest(self, seconds: int) -> List[float]:
+        n = max(1, int(seconds / self.config.record_interval))
+        return list(self.recorder.bars["open_interest"][-n:])
+
     def recent_index(self, seconds: int) -> List[float]:
         n = max(1, int(seconds / self.config.record_interval))
         return list(self._index_samples)[-n:]

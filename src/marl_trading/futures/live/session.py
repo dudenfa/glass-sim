@@ -24,7 +24,7 @@ def _r(value: Optional[float], digits: int = 4) -> Optional[float]:
 
 
 class LiveSession:
-    def __init__(self, scenario: str = "default", seed: int = 1, transparency: Optional[str] = None, speed: float = 10.0, duration: Optional[float] = None, config: Optional[MarketConfig] = None) -> None:
+    def __init__(self, scenario: str = "default", seed: int = 1, transparency: Optional[str] = None, speed: float = 10.0, duration: Optional[float] = None, config: Optional[MarketConfig] = None, rl_checkpoints: Optional[List[str]] = None) -> None:
         self.lock = threading.RLock()
         self.speed = float(speed)
         self.playing = False
@@ -33,6 +33,7 @@ class LiveSession:
         self._summary_cache: Dict[str, Any] = {}
         self._summary_time = -1.0
         self._custom_config = config
+        self.rl_checkpoints = list(rl_checkpoints or [])
         self.scenario = scenario
         self.duration = duration
         self._build(scenario, seed, transparency)
@@ -51,6 +52,13 @@ class LiveSession:
             config = replace(config, transparency=Transparency(transparency))
         self.scenario = scenario
         self.market = PerpetualMarket(config)
+        for i, checkpoint in enumerate(self.rl_checkpoints, start=1):
+            from ..rl.policy import load_run_config, policy_agent_from_checkpoint
+
+            agent = policy_agent_from_checkpoint(checkpoint)
+            agent.agent_id = f"rl_{i:02d}"
+            env = load_run_config(checkpoint).get("env", {})
+            self.market.add_agent(agent, float(env.get("collateral", 100_000.0)), private_signals=bool(env.get("private_signals")))
         self.market.run_until(0.0)
         self._summary_time = -1.0
 
@@ -318,6 +326,8 @@ class LiveSession:
             recorder = market.recorder
             trades = [t for t in recorder.trades[-5000:] if t.buyer == agent_id or t.seller == agent_id][-60:]
             params = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in vars(agent).items() if not k.startswith("_") and isinstance(v, (int, float, str, bool))}
+            if hasattr(agent, "action_distribution"):
+                params.update({f"action {name}": share for name, share in agent.action_distribution().items()})
             return {
                 "account": asdict(account.snapshot(market.mark_price, market.contract.mmr)),
                 "params": params,

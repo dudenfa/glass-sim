@@ -9,6 +9,10 @@ Examples::
     python -m marl_trading.futures compare "scenario=default" "scenario=anonymous" --seeds 1-10
     python -m marl_trading.futures compare artifacts/futures/run_a artifacts/futures/run_b --agents
 
+    python -m marl_trading.futures train --name ppo_full_v1 --timesteps 500000
+    python -m marl_trading.futures evaluate checkpoints/futures/ppo_full_v1 --seeds 31-40
+    python -m marl_trading.futures serve --rl checkpoints/futures/ppo_full_v1
+
 (``perpsim`` is the same command once the package is installed.)
 """
 
@@ -63,7 +67,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from .live import FuturesViewer, LiveSession
 
     duration = parse_duration(args.duration) if args.duration else None
-    session = LiveSession(scenario=args.scenario, seed=args.seed, transparency=args.transparency, speed=args.speed, duration=duration)
+    checkpoints = [str(path if str(path).endswith(".zip") else f"{path}/model.zip") for path in args.rl]
+    session = LiveSession(scenario=args.scenario, seed=args.seed, transparency=args.transparency, speed=args.speed, duration=duration, rl_checkpoints=checkpoints)
     session.playing = not args.paused
     viewer = FuturesViewer(session, host=args.host, port=args.port)
     print(f"Futures market viewer on {viewer.url}  (Ctrl+C to stop)")
@@ -117,6 +122,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     serve.add_argument("--speed", type=float, default=10.0, help="simulated seconds per real second")
     serve.add_argument("--paused", action="store_true")
     serve.add_argument("--open", action="store_true", help="open the browser")
+    serve.add_argument("--rl", action="append", default=[], metavar="RUN_DIR_OR_ZIP", help="add a trained RL agent (repeatable); shown as rl_01, rl_02, ...")
     serve.set_defaults(func=cmd_serve)
 
     compare = sub.add_parser("compare", help="compare two runs, or two setups over a panel of seeds")
@@ -128,9 +134,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     compare.add_argument("--verbose", action="store_true", help="print progress while running panels")
     compare.set_defaults(func=cmd_compare)
 
+    train = sub.add_parser("train", help="train an RL agent (see python -m marl_trading.futures.rl.train --help)", add_help=False)
+    train.set_defaults(func=None, passthrough="train")
+    evaluate = sub.add_parser("evaluate", help="evaluate a trained RL agent (see python -m marl_trading.futures.rl.evaluate --help)", add_help=False)
+    evaluate.set_defaults(func=None, passthrough="evaluate")
+
     listing = sub.add_parser("scenarios", help="list available scenarios")
     listing.set_defaults(func=cmd_scenarios)
 
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in ("train", "evaluate"):
+        if argv[0] == "train":
+            from .rl.train import main as train_main
+
+            return train_main(argv[1:])
+        from .rl.evaluate import main as evaluate_main
+
+        return evaluate_main(argv[1:])
     args = parser.parse_args(argv)
     return args.func(args)
 

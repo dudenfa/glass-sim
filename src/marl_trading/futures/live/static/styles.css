@@ -64,6 +64,7 @@ label { color: var(--muted); display: inline-flex; gap: 6px; align-items: center
 .swatch.mark { background: var(--mark); }
 .swatch.index { background: var(--index); }
 .swatch.liq { background: var(--red); height: 8px; width: 8px; border-radius: 50%; }
+.swatch.liq.short { background: var(--green); margin-left: 6px; }
 .swatch.news { background: var(--news); }
 
 .tabs { display: flex; gap: 2px; flex-wrap: wrap; }

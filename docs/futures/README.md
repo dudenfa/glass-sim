@@ -320,7 +320,7 @@ injects orders immediately. Combine them with `market.run_until(time)`.
 
 ## Driving agents from outside (RL)
 
-`ExternalAgent` connects a learning algorithm:
+### Low level: `ExternalAgent`
 
 ```python
 from marl_trading.futures import AgentSpec, ExternalAgent
@@ -332,9 +332,48 @@ while (agent_id := market.run_until_decision()) is not None:
     market.act(agent_id, policy(view))     # action; reward from view.me.equity changes
 ```
 
-Several external agents can be present. The market pauses at each one's
-wakeup, which is the natural shape of a turn-based multi-agent (PettingZoo AEC)
-environment. `ExternalAgent(policy=f)` runs a trained policy inline instead.
+Several external agents can be present; the market pauses at each one's
+wakeup. `ExternalAgent(policy=f)` runs a policy inline instead.
+
+### Gymnasium environment and training (`marl_trading.futures.rl`)
+
+```python
+from marl_trading.futures.rl import EnvConfig, PerpTradingEnv
+
+env = PerpTradingEnv(EnvConfig(scenario="default", collateral=100_000, wake_interval=5.0))
+obs, info = env.reset()
+obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+mask = env.action_masks()                  # for sb3_contrib.MaskablePPO
+```
+
+- **Observation**: 32 scaled numbers: market state (spread, mid/mark vs index,
+  returns, volatility, book imbalance, depth, taker flow, funding, open
+  interest, news), own account (leverage, PnL, margin, liquidation distance,
+  resting orders) and a transparency block (aggregate positioning,
+  liquidation clusters, largest account, strongest flow), zero when hidden.
+  `env.encoder.feature_names` lists them.
+- **Actions**: 9 discrete actions (hold, market buy/sell small/large, post-only
+  bid/ask at the touch, cancel all, close position) with validity masks and a
+  10x exposure cap.
+- **Reward**: change of the account's exit value (collateral + value of the
+  position if closed against the real book, minus the closing fee) between
+  decisions, which includes fees, funding and liquidation penalties, plus an
+  explicit liquidation penalty; 1 unit = 1% of initial capital.
+
+Command line:
+
+```bash
+perpsim train --name my_agent --timesteps 1000000 --train-seeds 1000-1999 --episode-duration 4h
+perpsim evaluate checkpoints/futures/my_agent --seeds 31-40      # model vs random vs hold vs no agent
+perpsim serve --rl checkpoints/futures/my_agent                  # watch it trade
+```
+
+Run `perpsim train --help` for all options (transparency, capital, wake rate,
+private signals, penalties, exposure cap). A trained policy can join any
+scenario through `marl_trading.futures.rl.policy.policy_agent_from_checkpoint`.
+
+Use many training seeds: agents trained on a handful of worlds memorize them
+and fail on unseen seeds.
 
 ## Validation
 

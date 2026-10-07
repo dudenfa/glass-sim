@@ -1,0 +1,191 @@
+"""Evaluate a trained agent on held-out seeds, next to baselines.
+
+    python -m marl_trading.futures.rl.evaluate checkpoints/futures/ppo_full_v1 --seeds 31-40
+
+For every seed the same market (same scenario, seed and duration, hence the
+same exogenous world) is run once per *treatment*:
+
+- ``model``: the trained policy (deterministic);
+- ``random``: a uniformly random policy over valid actions;
+- ``hold``: a policy that never trades;
+- ``none``: the market without the extra participant (market-quality reference);
+- ``blind``: the trained policy without its private signals (signal inputs are
+  zero). Only meaningful for agents trained with private signals: the gap
+  between ``model`` and ``blind`` measures how much the agent uses them.
+
+All treatments with a learner use the same capital, wake rate, observation
+and action spaces. Results are reported per seed and as medians, with paired
+model-minus-baseline differences, and written to ``<run>/eval_<seeds>/``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import statistics
+from dataclasses import replace
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
+
+from .. import scenarios
+from ..config import AgentSpec, parse_duration
+from ..market import PerpetualMarket
+from ..types import Transparency
+from .policy import HoldPolicy, ModelPolicy, PolicyAgent, RandomPolicy, encoder_and_actions_from_config, load_run_config
+
+LEARNER_ID = "rl_01"
+MARKET_KEYS = ("median_spread_bps", "two_sided_book_fraction", "last_index_mean_abs_bps", "return_vol_1m_bps", "volume_contracts", "liquidations")
+
+
+def _parse_seeds(text: str) -> List[int]:
+    seeds: List[int] = []
+    for part in text.split(","):
+        if "-" in part:
+            a, b = part.split("-", 1)
+            seeds.extend(range(int(a), int(b) + 1))
+        elif part.strip():
+            seeds.append(int(part))
+    return seeds
+
+
+def run_treatment(run_config: Dict[str, Any], treatment: str, seed: int, duration: float, model: Optional[ModelPolicy] = None, transparency: Optional[str] = None) -> Dict[str, Any]:
+    env = run_config["env"]
+    config = scenarios.get(env.get("scenario", "default"), seed=seed, duration=duration)
+    level = transparency or env.get("transparency")
+    if level:
+        config = replace(config, transparency=Transparency(level))
+    if env.get("news_rate_per_hour") is not None:
+        config = replace(config, news=replace(config.news, rate_per_hour=env["news_rate_per_hour"]))
+    agent = None
+    if treatment != "none":
+        encoder, actions = encoder_and_actions_from_config(run_config)
+        policy = {"model": model, "blind": model, "random": RandomPolicy(), "hold": HoldPolicy()}[treatment]
+        agent = PolicyAgent(policy, wake_interval=float(env.get("wake_interval", 5.0)), encoder=encoder, actions=actions)
+        agent.agent_id = LEARNER_ID
+    market = PerpetualMarket(config)
+    if agent is not None:
+        market.add_agent(agent, float(env.get("collateral", 100_000.0)), private_signals=bool(env.get("private_signals")) and treatment != "blind")
+    result = market.run()
+    summary = result.summary()
+    groups = {g["agent_type"]: g for g in result.group_table()}
+    row: Dict[str, Any] = {
+        "seed": seed,
+        "treatment": treatment,
+        "market": {key: summary.get(key) for key in MARKET_KEYS},
+        "group_returns": {k: round(v["return_pct"], 4) for k, v in groups.items()},
+    }
+    if agent is not None:
+        snap = next(a for a in result.accounts if a.agent_id == LEARNER_ID)
+        row["learner"] = {
+            "return_pct": snap.return_pct,
+            "total_pnl": snap.total_pnl,
+            "realized_pnl": snap.realized_pnl,
+            "fees_paid": snap.fees_paid,
+            "funding_paid": snap.funding_paid,
+            "max_drawdown_pct": snap.max_drawdown_pct,
+            "max_abs_position": snap.max_abs_position,
+            "max_leverage": snap.max_leverage,
+            "liquidations": snap.liquidations,
+            "trade_count": snap.trade_count,
+            "maker_share": snap.maker_share,
+            "final_position": snap.position,
+            "active": snap.active,
+            "actions": agent.action_distribution(),
+        }
+    return row
+
+
+def _median(values: Sequence[float]) -> Optional[float]:
+    values = [v for v in values if v is not None]
+    return statistics.median(values) if values else None
+
+
+def evaluate(run_dir: str, seeds: Sequence[int], duration: float = 4 * 3600.0, treatments: Sequence[str] = ("model", "random", "hold", "none"), transparency: Optional[str] = None, model_file: str = "model.zip", progress: bool = True) -> Dict[str, Any]:
+    run_path = Path(run_dir)
+    model_path = run_path / model_file
+    run_config = load_run_config(model_path)
+    model = ModelPolicy(model_path) if ("model" in treatments or "blind" in treatments) else None
+    rows: List[Dict[str, Any]] = []
+    for seed in seeds:
+        for treatment in treatments:
+            rows.append(run_treatment(run_config, treatment, seed, duration, model=model, transparency=transparency))
+            if progress:
+                learner = rows[-1].get("learner")
+                extra = f" return {learner['return_pct']:+.2f}%" if learner else ""
+                print(f"  seed {seed} {treatment:6s}{extra}", flush=True)
+    return {"run": str(run_path), "model": model_file, "seeds": list(seeds), "duration": duration, "transparency": transparency or run_config["env"].get("transparency") or "scenario default", "rows": rows}
+
+
+def format_evaluation(report: Dict[str, Any]) -> str:
+    rows = report["rows"]
+    treatments = list(dict.fromkeys(r["treatment"] for r in rows))
+    learner_treatments = [t for t in treatments if t != "none"]
+    by = {(r["treatment"], r["seed"]): r for r in rows}
+    seeds = report["seeds"]
+    lines = [
+        f"Evaluation of {report['run']} ({report['model']})",
+        f"seeds {seeds[0]}..{seeds[-1]} ({len(seeds)}), duration {report['duration'] / 3600:.1f}h, transparency {report['transparency']}",
+        "",
+        "Learner (median over seeds)",
+        f"  {'treatment':10s} {'return %':>9s} {'pnl':>10s} {'fees':>9s} {'funding':>9s} {'maxDD %':>8s} {'max|pos|':>9s} {'maxLev':>7s} {'liqs':>5s} {'fills':>7s} {'maker %':>8s}",
+    ]
+    for t in learner_treatments:
+        ls = [by[(t, s)]["learner"] for s in seeds]
+        med = lambda k: _median([l[k] for l in ls])
+        lines.append(
+            f"  {t:10s} {med('return_pct'):+9.2f} {med('total_pnl'):+10,.0f} {med('fees_paid'):9,.0f} {med('funding_paid'):+9,.0f} {med('max_drawdown_pct'):8.1f} "
+            f"{med('max_abs_position'):9,.0f} {med('max_leverage'):7.1f} {med('liquidations'):5.0f} {med('trade_count'):7,.0f} {100 * med('maker_share'):8.0f}"
+        )
+    if "model" in learner_treatments:
+        lines.append("")
+        lines.append("Model minus baseline, paired by seed (learner return, percentage points)")
+        for base in [t for t in learner_treatments if t != "model"]:
+            diffs = [by[("model", s)]["learner"]["return_pct"] - by[(base, s)]["learner"]["return_pct"] for s in seeds]
+            wins = sum(1 for d in diffs if d > 0)
+            lines.append(f"  vs {base:8s} median {statistics.median(diffs):+7.2f}  mean {statistics.mean(diffs):+7.2f}  model better in {wins}/{len(diffs)} seeds")
+        lines.append("")
+        lines.append("Model return per seed: " + "  ".join(f"{s}:{by[('model', s)]['learner']['return_pct']:+.2f}%" for s in seeds))
+        lines.append("")
+        lines.append("Model action mix (median share over seeds)")
+        names = list(by[("model", seeds[0])]["learner"]["actions"].keys())
+        lines.append("  " + "  ".join(f"{n}={_median([by[('model', s)]['learner']['actions'][n] for s in seeds]):.3f}" for n in names))
+    lines.append("")
+    lines.append("Participant-type returns, % (median over seeds)")
+    types = sorted({k for r in rows for k in r["group_returns"]})
+    lines.append(f"  {'type':20s}" + "".join(f"{t:>10s}" for t in treatments))
+    for agent_type in types:
+        vals = [_median([by[(t, s)]["group_returns"].get(agent_type) for s in seeds]) for t in treatments]
+        lines.append(f"  {agent_type:20s}" + "".join(f"{v:+10.2f}" if v is not None else f"{'—':>10s}" for v in vals))
+    lines.append("")
+    lines.append("Market quality (median over seeds)")
+    lines.append(f"  {'metric':26s}" + "".join(f"{t:>12s}" for t in treatments))
+    for key in MARKET_KEYS:
+        vals = [_median([by[(t, s)]["market"][key] for s in seeds]) for t in treatments]
+        lines.append(f"  {key:26s}" + "".join(f"{v:12.3f}" if v is not None else f"{'—':>12s}" for v in vals))
+    return "\n".join(lines)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="Evaluate a trained futures-market agent on held-out seeds")
+    parser.add_argument("run_dir", help="directory written by marl_trading.futures.rl.train")
+    parser.add_argument("--seeds", default="31-40")
+    parser.add_argument("--duration", default="4h")
+    parser.add_argument("--treatments", default="model,random,hold,none")
+    parser.add_argument("--transparency", default=None, choices=["anonymous", "attributed", "full"])
+    parser.add_argument("--model-file", default="model.zip")
+    args = parser.parse_args(argv)
+    seeds = _parse_seeds(args.seeds)
+    report = evaluate(args.run_dir, seeds, parse_duration(args.duration), args.treatments.split(","), args.transparency, args.model_file)
+    text = format_evaluation(report)
+    print("\n" + text)
+    tag = f"eval_{args.seeds.replace(',', '_')}_{args.transparency or 'default'}_{Path(args.model_file).stem}"
+    out = Path(args.run_dir) / tag
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "report.txt").write_text(text + "\n")
+    (out / "results.json").write_text(json.dumps(report, indent=2, default=str))
+    print(f"\nwritten to {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -37,3 +37,7 @@ market_demo_output/
 
 # Personal documents
 documents/
+
+# Personal research notes and reports (not part of the repository)
+reports/
+research_notes/

@@ -229,6 +229,9 @@ class MarketView:
     def mark_history(self, seconds: int = 60) -> List[float]:
         return self._market.recent_marks(seconds)
 
+    def open_interest_history(self, seconds: int = 60) -> List[float]:
+        return self._market.recent_open_interest(seconds)
+
     def index_history(self, seconds: int = 60) -> List[float]:
         return self._market.recent_index(seconds)
 
