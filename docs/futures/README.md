@@ -375,6 +375,44 @@ scenario through `marl_trading.futures.rl.policy.policy_agent_from_checkpoint`.
 Use many training seeds: agents trained on a handful of worlds memorize them
 and fail on unseen seeds.
 
+### Raw-table observation, continued training
+
+```bash
+# observation with the last 20 trades and the 10 largest accounts (362 inputs)
+perpsim train --name my_tables_agent --trades-table 20 --accounts-table 10 --net-arch 256,256
+# continue training an existing agent on new worlds
+perpsim train --name my_agent_more --init-from checkpoints/futures/my_agent/model.zip --train-seeds 3000-3999
+```
+
+Who traded is described by observable properties (recent net flow, leverage,
+return), never by name, and every field follows the transparency level.
+
+### Several learning agents (MARL)
+
+`marl_trading.futures.rl.marl` trains several learners together with
+independent PPO in parallel markets (each learner has its own network,
+experience and exit-value reward; `--shared-policy` shares one network):
+
+```bash
+python -m marl_trading.futures.rl.marl --name my_marl --learners 3 --timesteps 600000
+python -m marl_trading.futures.rl.marl --name my_marl_more --init-from checkpoints/futures/my_marl --train-seeds 4000-4999
+python -m marl_trading.futures.rl.marl_evaluate checkpoints/futures/my_marl --single checkpoints/futures/my_agent --seeds 31-40
+```
+
+The evaluation compares the jointly trained learners with copies of a
+single-agent policy, scripted market makers and no extra participants, all
+with the same capital: coalition and per-agent returns, inventory direction,
+fill quality and market quality.
+
+### Reproducing the paper outputs
+
+```bash
+PYTHONPATH=src python scripts/paper/simulator_experiments.py   # scenario sweep, transparency experiment, example session
+scripts/futures_rl_queue.sh                                    # single-agent training runs (A, B, C x 3)
+scripts/futures_followup.sh                                    # evaluations, input analysis, MARL, extended run, figures
+PYTHONPATH=src python scripts/paper/make_figures.py            # paper/figures and paper/tables
+```
+
 ## Validation
 
 - **Accounting conservation.** The sum of all equities, plus the insurance

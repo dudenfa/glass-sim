@@ -9,6 +9,10 @@ same exogenous world) is run once per *treatment*:
 - ``random``: a uniformly random policy over valid actions;
 - ``hold``: a policy that never trades;
 - ``none``: the market without the extra participant (market-quality reference);
+- ``scripted_mm``: the fair control: a scripted ``MarketMaker`` with the same
+  capital and the same mean decision interval as the learner;
+- ``scripted_mm_fast``: the same scripted market maker at its native speed
+  (decision every ~1.5 s), i.e. with a speed advantage over the learner;
 - ``blind``: the trained policy without its private signals (signal inputs are
   zero). Only meaningful for agents trained with private signals: the gap
   between ``model`` and ``blind`` measures how much the agent uses them.
@@ -31,6 +35,7 @@ from .. import scenarios
 from ..config import AgentSpec, parse_duration
 from ..market import PerpetualMarket
 from ..types import Transparency
+from ..agents import MarketMaker
 from .policy import HoldPolicy, ModelPolicy, PolicyAgent, RandomPolicy, encoder_and_actions_from_config, load_run_config
 
 LEARNER_ID = "rl_01"
@@ -57,7 +62,11 @@ def run_treatment(run_config: Dict[str, Any], treatment: str, seed: int, duratio
     if env.get("news_rate_per_hour") is not None:
         config = replace(config, news=replace(config.news, rate_per_hour=env["news_rate_per_hour"]))
     agent = None
-    if treatment != "none":
+    if treatment in ("scripted_mm", "scripted_mm_fast"):
+        agent = MarketMaker(wake_interval=float(env.get("wake_interval", 5.0)) if treatment == "scripted_mm" else 1.5)
+        agent.agent_type = "control_mm"
+        agent.agent_id = LEARNER_ID
+    elif treatment != "none":
         encoder, actions = encoder_and_actions_from_config(run_config)
         policy = {"model": model, "blind": model, "random": RandomPolicy(), "hold": HoldPolicy()}[treatment]
         agent = PolicyAgent(policy, wake_interval=float(env.get("wake_interval", 5.0)), encoder=encoder, actions=actions)
@@ -90,9 +99,48 @@ def run_treatment(run_config: Dict[str, Any], treatment: str, seed: int, duratio
             "maker_share": snap.maker_share,
             "final_position": snap.position,
             "active": snap.active,
-            "actions": agent.action_distribution(),
+            "actions": agent.action_distribution() if hasattr(agent, "action_distribution") else {},
         }
+        row["learner"].update(behaviour_metrics(result, LEARNER_ID))
     return row
+
+
+def behaviour_metrics(result, agent_id: str) -> Dict[str, Any]:
+    """How the agent trades: time long/short, typical position, and fill quality.
+
+    ``edge_bps``: signed distance between the fill price and the mid at the fill
+    (positive = bought below / sold above the mid). ``markout_{10,60}s_bps``:
+    signed mid move 10 s / 60 s after the fill relative to the fill price
+    (positive = the trade was profitable at that horizon; a drop from edge to
+    markout measures adverse selection).
+    """
+    import numpy as np
+
+    positions = np.asarray(result.recorder.account_position.get(agent_id, [0]), dtype=float)
+    mids = np.asarray([np.nan if m is None else m for m in result.recorder.bars["mid"]], dtype=float)
+    edge, m10, m60 = [], [], []
+    for trade in result.recorder.trades:
+        if agent_id not in (trade.buyer, trade.seller):
+            continue
+        sign = 1.0 if trade.buyer == agent_id else -1.0
+        i = min(int(trade.time), len(mids) - 1)
+        if np.isnan(mids[i]):
+            continue
+        edge.append(sign * (mids[i] - trade.price) / mids[i] * 1e4)
+        for horizon, store in ((10, m10), (60, m60)):
+            j = min(i + horizon, len(mids) - 1)
+            if not np.isnan(mids[j]):
+                store.append(sign * (mids[j] - trade.price) / trade.price * 1e4)
+    mean = lambda xs: float(np.mean(xs)) if xs else None
+    return {
+        "time_long": float((positions > 0).mean()),
+        "time_short": float((positions < 0).mean()),
+        "time_flat": float((positions == 0).mean()),
+        "mean_abs_position": float(np.abs(positions).mean()),
+        "edge_bps": mean(edge),
+        "markout_10s_bps": mean(m10),
+        "markout_60s_bps": mean(m60),
+    }
 
 
 def _median(values: Sequence[float]) -> Optional[float]:
@@ -127,16 +175,24 @@ def format_evaluation(report: Dict[str, Any]) -> str:
         f"seeds {seeds[0]}..{seeds[-1]} ({len(seeds)}), duration {report['duration'] / 3600:.1f}h, transparency {report['transparency']}",
         "",
         "Learner (median over seeds)",
-        f"  {'treatment':10s} {'return %':>9s} {'pnl':>10s} {'fees':>9s} {'funding':>9s} {'maxDD %':>8s} {'max|pos|':>9s} {'maxLev':>7s} {'liqs':>5s} {'fills':>7s} {'maker %':>8s}",
+        f"  {'treatment':18s} {'return %':>9s} {'pnl':>10s} {'fees':>9s} {'funding':>9s} {'maxDD %':>8s} {'max|pos|':>9s} {'maxLev':>7s} {'liqs':>5s} {'fills':>7s} {'maker %':>8s}",
     ]
     for t in learner_treatments:
         ls = [by[(t, s)]["learner"] for s in seeds]
         med = lambda k: _median([l[k] for l in ls])
         lines.append(
-            f"  {t:10s} {med('return_pct'):+9.2f} {med('total_pnl'):+10,.0f} {med('fees_paid'):9,.0f} {med('funding_paid'):+9,.0f} {med('max_drawdown_pct'):8.1f} "
+            f"  {t:18s} {med('return_pct'):+9.2f} {med('total_pnl'):+10,.0f} {med('fees_paid'):9,.0f} {med('funding_paid'):+9,.0f} {med('max_drawdown_pct'):8.1f} "
             f"{med('max_abs_position'):9,.0f} {med('max_leverage'):7.1f} {med('liquidations'):5.0f} {med('trade_count'):7,.0f} {100 * med('maker_share'):8.0f}"
         )
     if "model" in learner_treatments:
+        lines.append("")
+        lines.append("Learner behaviour (median over seeds)")
+        lines.append(f"  {'treatment':18s} {'long':>6s} {'short':>6s} {'|pos|':>8s} {'edge':>7s} {'mk10s':>7s} {'mk60s':>7s}")
+        for t in learner_treatments:
+            ls = [by[(t, s)]["learner"] for s in seeds]
+            m = lambda k: _median([l.get(k) for l in ls])
+            fmt = lambda v, d=2: "—" if v is None else f"{v:.{d}f}"
+            lines.append(f"  {t:18s} {fmt(m('time_long')):>6s} {fmt(m('time_short')):>6s} {fmt(m('mean_abs_position'), 0):>8s} {fmt(m('edge_bps'), 1):>7s} {fmt(m('markout_10s_bps'), 1):>7s} {fmt(m('markout_60s_bps'), 1):>7s}")
         lines.append("")
         lines.append("Model minus baseline, paired by seed (learner return, percentage points)")
         for base in [t for t in learner_treatments if t != "model"]:
@@ -170,7 +226,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("run_dir", help="directory written by marl_trading.futures.rl.train")
     parser.add_argument("--seeds", default="31-40")
     parser.add_argument("--duration", default="4h")
-    parser.add_argument("--treatments", default="model,random,hold,none")
+    parser.add_argument("--treatments", default="model,scripted_mm,scripted_mm_fast,random,hold,none")
     parser.add_argument("--transparency", default=None, choices=["anonymous", "attributed", "full"])
     parser.add_argument("--model-file", default="model.zip")
     args = parser.parse_args(argv)

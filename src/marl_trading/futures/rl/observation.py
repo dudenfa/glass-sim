@@ -13,7 +13,18 @@ roughly [-5, 5]. It has three blocks:
   vector has the same size at every level and one network can be trained and
   compared across levels;
 - **signal** (optional): the agent's pending private news signal, used to test
-  that the learning pipeline can pick up a known edge.
+  that the learning pipeline can pick up a known edge;
+- **trades table** (optional, ``trades_table=N``): the last N public trades,
+  one row each (price vs mark, size, aggressor, age, liquidation, own trade,
+  and who traded, described by properties: each side's recent net flow at
+  ATTRIBUTED, leverage and return at FULL);
+- **accounts table** (optional, ``accounts_table=K``, FULL only): the K largest
+  other accounts by notional (direction and leverage, size share, entry vs
+  mark, unrealized PnL, return, distance to liquidation, equity, recent flow,
+  resting liquidity in the book).
+
+Identities are never given as names: the network cannot use "whale_01" or a
+hash. "Who" is described by what anyone can observe about that account.
 
 ``feature_names`` documents every position in the vector.
 """
@@ -52,6 +63,8 @@ class ObservationConfig:
     include_signal: bool = False
     flow_window: float = 600.0
     liquidation_band_bps: float = 100.0
+    trades_table: int = 0
+    accounts_table: int = 0
 
 
 MARKET_FEATURES = [
@@ -93,6 +106,31 @@ TRANSPARENCY_FEATURES = [
     "strongest_flow_signed",
 ]
 SIGNAL_FEATURES = ["signal_expected_jump_bps", "signal_seconds_to_public"]
+TRADE_FIELDS = [
+    "price_vs_mark",
+    "log_size",
+    "aggressor",
+    "age",
+    "liquidation",
+    "mine",
+    "buyer_flow",
+    "seller_flow",
+    "buyer_leverage",
+    "seller_leverage",
+    "buyer_return",
+    "seller_return",
+]
+ACCOUNT_FIELDS = [
+    "signed_leverage",
+    "size_share",
+    "entry_vs_mark",
+    "unrealized_pnl",
+    "return",
+    "liquidation_distance",
+    "log_equity",
+    "flow",
+    "resting_liquidity",
+]
 
 
 class ObservationEncoder:
@@ -103,6 +141,10 @@ class ObservationEncoder:
             names = names + TRANSPARENCY_FEATURES
         if self.config.include_signal:
             names = names + SIGNAL_FEATURES
+        for i in range(self.config.trades_table):
+            names = names + [f"trade{i:02d}_{field}" for field in TRADE_FIELDS]
+        for k in range(self.config.accounts_table):
+            names = names + [f"account{k:02d}_{field}" for field in ACCOUNT_FIELDS]
         self.feature_names: List[str] = names
 
     @property
@@ -219,6 +261,88 @@ class ObservationEncoder:
         signal = min(pending, key=lambda s: s.public_time)
         return [signal.expected_log_jump * 1e4 / 50.0, (signal.public_time - view.time) / 90.0]
 
+    def _flows(self, view: MarketView) -> dict:
+        flows: dict = {}
+        if not view.can_see(Transparency.ATTRIBUTED):
+            return flows
+        start = view.time - self.config.flow_window
+        for trade in view.recent_trades(2000):
+            if trade.time < start:
+                continue
+            flows[trade.buyer] = flows.get(trade.buyer, 0) + trade.quantity
+            flows[trade.seller] = flows.get(trade.seller, 0) - trade.quantity
+        return flows
+
+    def _tables(self, view: MarketView) -> List[float]:
+        n_trades, n_accounts = self.config.trades_table, self.config.accounts_table
+        attributed = view.can_see(Transparency.ATTRIBUTED)
+        full = view.can_see(Transparency.FULL)
+        mark = view.mark_price
+        bids, asks = view.book(depth=10)
+        depth = max(1.0, (sum(l.quantity for l in bids) + sum(l.quantity for l in asks)) / 2.0)
+        flows = self._flows(view)
+        me = view.me.public_id
+        accounts = {a.public_id: a for a in view.accounts(include_self=True)} if full else {}
+
+        def flow_of(owner) -> float:
+            return flows.get(owner, 0) / depth if owner is not None else 0.0
+
+        values: List[float] = []
+        trades = view.recent_trades(n_trades) if n_trades else []
+        trades = list(reversed(trades))  # most recent first
+        for i in range(n_trades):
+            if i >= len(trades):
+                values.extend([0.0] * len(TRADE_FIELDS))
+                continue
+            t = trades[i]
+            buyer = accounts.get(t.buyer) if full else None
+            seller = accounts.get(t.seller) if full else None
+            signed_lev = lambda a: (0.0 if a is None or a.position == 0 else (1 if a.position > 0 else -1) * min(a.leverage, 50.0) / 10.0)
+            values.extend(
+                [
+                    (t.price - mark) / mark * 1e4 / 10.0,
+                    math.log1p(t.quantity) / 5.0,
+                    1.0 if t.aggressor is Side.BUY else -1.0,
+                    min(1.0, (view.time - t.time) / 300.0),
+                    1.0 if t.liquidation else 0.0,
+                    1.0 if attributed and me in (t.buyer, t.seller) else 0.0,
+                    flow_of(t.buyer) if attributed else 0.0,
+                    flow_of(t.seller) if attributed else 0.0,
+                    signed_lev(buyer),
+                    signed_lev(seller),
+                    buyer.return_pct / 10.0 if buyer is not None else 0.0,
+                    seller.return_pct / 10.0 if seller is not None else 0.0,
+                ]
+            )
+        if n_accounts:
+            others = sorted((a for pid, a in accounts.items() if pid != me and a.active and a.position != 0), key=lambda a: -a.notional)
+            total_notional = sum(a.notional for a in others) or 1.0
+            resting: dict = {}
+            if attributed:
+                for side in (Side.BUY, Side.SELL):
+                    for order in view.book_orders(side, depth=10):
+                        resting[order.owner] = resting.get(order.owner, 0) + order.quantity
+            for k in range(n_accounts):
+                if k >= len(others):
+                    values.extend([0.0] * len(ACCOUNT_FIELDS))
+                    continue
+                a = others[k]
+                liq = a.liquidation_price
+                values.extend(
+                    [
+                        (1 if a.position > 0 else -1) * min(a.leverage, 50.0) / 10.0,
+                        a.notional / total_notional,
+                        (a.entry_price - mark) / mark * 1e4 / 100.0,
+                        a.unrealized_pnl / max(a.equity, 1e-9) * 10.0,
+                        a.return_pct / 10.0,
+                        1.0 if liq is None else min(1.0, abs(mark - liq) / mark / 0.10),
+                        math.log10(max(a.equity, 1.0)) / 7.0,
+                        flow_of(a.public_id),
+                        resting.get(a.public_id, 0) / depth,
+                    ]
+                )
+        return values
+
     # ------------------------------------------------------------------ main
 
     def encode(self, view: MarketView) -> np.ndarray:
@@ -227,6 +351,8 @@ class ObservationEncoder:
             values += self._transparency(view)
         if self.config.include_signal:
             values += self._signal(view)
+        if self.config.trades_table or self.config.accounts_table:
+            values += self._tables(view)
         vector = np.asarray(values, dtype=np.float32)
         np.nan_to_num(vector, copy=False, nan=0.0, posinf=CLIP, neginf=-CLIP)
         return np.clip(vector, -CLIP, CLIP)

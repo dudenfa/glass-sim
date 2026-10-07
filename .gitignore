@@ -41,3 +41,7 @@ documents/
 # Personal research notes and reports (not part of the repository)
 reports/
 research_notes/
+checkpoints/futures/*.log
+
+# Intermediate training snapshots (only final models are kept in git)
+checkpoints/futures/*/checkpoints/

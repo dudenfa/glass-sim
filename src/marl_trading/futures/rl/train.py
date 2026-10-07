@@ -113,6 +113,7 @@ def train(
     out_root: str = "checkpoints/futures",
     ppo_kwargs: Optional[Dict[str, Any]] = None,
     checkpoint_every: int = 50_000,
+    init_from: Optional[str] = None,
 ) -> Path:
     from sb3_contrib import MaskablePPO
     from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
@@ -158,7 +159,13 @@ def train(
     }
     (out / "config.json").write_text(json.dumps(config_record, indent=2, default=str))
 
-    model = MaskablePPO("MlpPolicy", venv, seed=seed, verbose=0, device="cpu", **params)
+    if init_from:
+        # Continue training an existing policy (same observation and action spaces required).
+        model = MaskablePPO.load(init_from, env=venv, device="cpu")
+        config_record["init_from"] = init_from
+        (out / "config.json").write_text(json.dumps(config_record, indent=2, default=str))
+    else:
+        model = MaskablePPO("MlpPolicy", venv, seed=seed, verbose=0, device="cpu", **params)
     callbacks = CallbackList(
         [
             _episode_logger(out / "training_log.csv"),
@@ -189,10 +196,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--private-signals", action="store_true", help="give the learner the informed traders' news signals (pipeline test)")
     parser.add_argument("--news-rate", type=float, default=None, help="override news per hour")
     parser.add_argument("--no-transparency-features", action="store_true")
+    parser.add_argument("--trades-table", type=int, default=0, help="rows of recent trades in the observation (raw-table variant)")
+    parser.add_argument("--accounts-table", type=int, default=0, help="rows of largest other accounts in the observation (FULL only)")
+    parser.add_argument("--net-arch", default="128,128", help="hidden layer sizes of actor and critic")
     parser.add_argument("--liquidation-penalty", type=float, default=0.05)
     parser.add_argument("--inactivity-penalty", type=float, default=0.0)
     parser.add_argument("--max-leverage", type=float, default=10.0)
     parser.add_argument("--out-root", default="checkpoints/futures")
+    parser.add_argument("--init-from", default=None, help="model.zip to continue training from")
     args = parser.parse_args(argv)
 
     from ..config import parse_duration
@@ -206,11 +217,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         wake_interval=args.wake_interval,
         private_signals=args.private_signals,
         news_rate_per_hour=args.news_rate,
-        observation=ObservationConfig(include_transparency=not args.no_transparency_features),
+        observation=ObservationConfig(
+            include_transparency=not args.no_transparency_features,
+            trades_table=args.trades_table,
+            accounts_table=args.accounts_table,
+        ),
         actions=ActionConfig(max_leverage=args.max_leverage),
         reward=RewardConfig(liquidation_penalty=args.liquidation_penalty, inactivity_penalty=args.inactivity_penalty),
     )
-    out = train(args.name, env_config, timesteps=args.timesteps, n_envs=args.n_envs, seed=args.seed, out_root=args.out_root)
+    net_arch = [int(x) for x in args.net_arch.split(",") if x]
+    out = train(
+        args.name,
+        env_config,
+        timesteps=args.timesteps,
+        n_envs=args.n_envs,
+        seed=args.seed,
+        out_root=args.out_root,
+        ppo_kwargs={"policy_kwargs": {"net_arch": net_arch}},
+        init_from=args.init_from,
+    )
     print(f"saved to {out}")
     return 0
 

@@ -99,3 +99,49 @@ def test_parallel_workers_use_disjoint_seeds():
             used.append(env.episode_seed())
             env._episode += 1
     assert sorted(used) == list(seeds)
+
+
+def test_multi_agent_market_rewards_add_up_per_learner():
+    from marl_trading.futures.rl.marl import MultiAgentConfig, MultiAgentMarket
+
+    env = MultiAgentMarket(MultiAgentConfig(scenario="small", n_learners=3, episode_duration=600.0))
+    request = env.reset(seed=5)
+    start = {agent_id: exit_value(env.market, agent_id) for agent_id in env.ids}
+    totals = {agent_id: 0.0 for agent_id in env.ids}
+    penalties = {agent_id: 0.0 for agent_id in env.ids}
+    rng = np.random.default_rng(0)
+    decisions = {agent_id: 0 for agent_id in env.ids}
+    while True:
+        for agent_id, reward, _terminal, info in request["closed"]:
+            totals[agent_id] += reward
+            penalties[agent_id] += info["penalty"]
+        if request["done"]:
+            break
+        decisions[request["agent"]] += 1
+        request = env.step(request["agent"], int(rng.choice(np.flatnonzero(request["mask"]))))
+    assert all(n > 20 for n in decisions.values())
+    for agent_id in env.ids:
+        initial = env.market.accounts[agent_id].initial_collateral
+        scale = env.config.reward.scale
+        assert totals[agent_id] * initial / scale + penalties[agent_id] == pytest.approx(exit_value(env.market, agent_id) - start[agent_id], abs=1e-6)
+    assert abs(env.market.conservation_error()) < 1e-6
+
+
+def test_ppo_update_handles_a_single_sample_last_minibatch():
+    import torch
+    from marl_trading.futures.rl.marl import _make_model, ppo_update
+
+    model = _make_model(32, 9, [16, 16], 3e-4, seed=0)
+    n = 257  # 256 + 1: the last minibatch has one sample
+    rng = np.random.default_rng(0)
+    data = {
+        "obs": rng.normal(size=(n, 32)).astype(np.float32),
+        "masks": np.ones((n, 9), dtype=bool),
+        "actions": rng.integers(0, 9, n),
+        "log_probs": np.full(n, np.log(1 / 9), dtype=np.float32),
+        "values": np.zeros(n, dtype=np.float32),
+        "advantages": rng.normal(size=n).astype(np.float32),
+        "returns": rng.normal(size=n).astype(np.float32),
+    }
+    ppo_update(model.policy, data, epochs=2, batch_size=256, clip=0.2, ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5)
+    assert all(torch.isfinite(p).all() for p in model.policy.parameters())
