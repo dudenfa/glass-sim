@@ -1,6 +1,6 @@
 # Transparent perpetual-futures market simulator
 
-`marl_trading.futures` is a multi-agent simulator of a **perpetual futures
+`glass_sim` is a multi-agent simulator of a **perpetual futures
 exchange**: a public limit order book where agents trade long and short with
 leverage, post margin, pay and receive funding, and get liquidated. The level
 of **transparency** (what every agent can see about the others) is an
@@ -25,12 +25,12 @@ data. They emerge from the agents' interaction.
 
 ```bash
 pip install -e ".[dev]"          # numpy is the only runtime dependency; pandas is optional
-python -m marl_trading.futures run --scenario default --seed 1
-python -m marl_trading.futures serve --open
+python -m glass_sim run --scenario default --seed 1
+python -m glass_sim serve --open
 ```
 
 ```python
-from marl_trading.futures import PerpetualMarket, scenarios
+from glass_sim import PerpetualMarket, scenarios
 
 result = PerpetualMarket(scenarios.default(seed=1)).run()
 result.print_report()
@@ -40,7 +40,7 @@ frames = result.to_frames()      # pandas DataFrames: bars, trades, liquidations
 The reference scenario simulates 4 hours with 88 agents (about 130,000
 events) in roughly 5 seconds on a laptop.
 
-Runnable examples live in [`examples/futures/`](../../examples/futures).
+Runnable examples live in [`examples/glass/`](../../examples/glass).
 
 ## Concepts
 
@@ -147,7 +147,7 @@ of its size 20 to 90 seconds before it becomes public.
 ## Writing an agent
 
 ```python
-from marl_trading.futures import Agent, MarketOrder, Side
+from glass_sim import Agent, MarketOrder, Side
 
 class Contrarian(Agent):
     agent_type = "contrarian"
@@ -169,7 +169,7 @@ Add it to any scenario:
 
 ```python
 from dataclasses import replace
-from marl_trading.futures import AgentSpec, PerpetualMarket, scenarios
+from glass_sim import AgentSpec, PerpetualMarket, scenarios
 
 base = scenarios.default(seed=1)
 config = replace(base, agents=base.agents + (AgentSpec(Contrarian, count=5, collateral=(5_000, 50_000)),))
@@ -212,7 +212,7 @@ Always use the `rng` argument for randomness, never the global generators.
 
 Other scenarios change one thing at a time: `anonymous`, `attributed`, `calm`,
 `volatile`, `retail_frenzy`, `no_arbitrage`, plus `small` for fast tests.
-List them with `python -m marl_trading.futures scenarios`.
+List them with `python -m glass_sim scenarios`.
 
 ## Configuration
 
@@ -259,27 +259,27 @@ Every field is explained in [METRICS.md](METRICS.md).
 From the command line:
 
 ```bash
-perpsim run --scenario volatile --seed 3 --duration 2h --agents --out artifacts/futures/volatile_s3
+glass run --scenario volatile --seed 3 --duration 2h --agents --out artifacts/glass/volatile_s3
 ```
 
 ### Comparing runs
 
 ```bash
 # two single runs (run specs or saved directories)
-perpsim compare "scenario=default seed=1" "scenario=default seed=1 transparency=anonymous"
-perpsim compare artifacts/futures/run_a artifacts/futures/run_b --agents
+glass compare "scenario=default seed=1" "scenario=default seed=1 transparency=anonymous"
+glass compare artifacts/glass/run_a artifacts/glass/run_b --agents
 
 # two setups over a paired seed panel: medians, paired differences, win counts
-perpsim compare "scenario=default" "scenario=anonymous" --seeds 1-10 --out comparison.txt
+glass compare "scenario=default" "scenario=anonymous" --seeds 1-10 --out comparison.txt
 ```
 
-In Python: `marl_trading.futures.compare.compare_runs(left, right)` and
+In Python: `glass_sim.compare.compare_runs(left, right)` and
 `compare_panels(left_spec, right_spec, seeds)`.
 
 ## Live viewer
 
 ```bash
-python -m marl_trading.futures serve --scenario default --seed 1 --speed 30 --open
+python -m glass_sim serve --scenario default --seed 1 --speed 30 --open
 ```
 
 Opens http://127.0.0.1:8766 with:
@@ -304,7 +304,7 @@ Because exogenous randomness is shared across treatments, experiments are
 naturally paired:
 
 ```python
-from marl_trading.futures import PerpetualMarket, Transparency, scenarios
+from glass_sim import PerpetualMarket, Transparency, scenarios
 
 for seed in range(1, 11):
     for level in Transparency:
@@ -312,7 +312,7 @@ for seed in range(1, 11):
         ...
 ```
 
-See [`examples/futures/03_transparency_experiment.py`](../../examples/futures/03_transparency_experiment.py).
+See [`examples/glass/03_transparency_experiment.py`](../../examples/glass/03_transparency_experiment.py).
 
 For controlled interventions, `market.shock_index(log_jump)` applies an
 exogenous jump at the current time, and `market.execute(agent_id, actions)`
@@ -323,7 +323,7 @@ injects orders immediately. Combine them with `market.run_until(time)`.
 ### Low level: `ExternalAgent`
 
 ```python
-from marl_trading.futures import AgentSpec, ExternalAgent
+from glass_sim import AgentSpec, ExternalAgent
 
 spec = AgentSpec(ExternalAgent, collateral=50_000, params={"wake_interval": 5.0}, external=True, prefix="rl")
 market = PerpetualMarket(replace(base, agents=base.agents + (spec,)))
@@ -335,10 +335,10 @@ while (agent_id := market.run_until_decision()) is not None:
 Several external agents can be present; the market pauses at each one's
 wakeup. `ExternalAgent(policy=f)` runs a policy inline instead.
 
-### Gymnasium environment and training (`marl_trading.futures.rl`)
+### Gymnasium environment and training (`glass_sim.rl`)
 
 ```python
-from marl_trading.futures.rl import EnvConfig, PerpTradingEnv
+from glass_sim.rl import EnvConfig, PerpTradingEnv
 
 env = PerpTradingEnv(EnvConfig(scenario="default", collateral=100_000, wake_interval=5.0))
 obs, info = env.reset()
@@ -363,14 +363,14 @@ mask = env.action_masks()                  # for sb3_contrib.MaskablePPO
 Command line:
 
 ```bash
-perpsim train --name my_agent --timesteps 1000000 --train-seeds 1000-1999 --episode-duration 4h
-perpsim evaluate checkpoints/futures/my_agent --seeds 31-40      # model vs random vs hold vs no agent
-perpsim serve --rl checkpoints/futures/my_agent                  # watch it trade
+glass train --name my_agent --timesteps 1000000 --train-seeds 1000-1999 --episode-duration 4h
+glass evaluate checkpoints/glass/my_agent --seeds 31-40      # model vs random vs hold vs no agent
+glass serve --rl checkpoints/glass/my_agent                  # watch it trade
 ```
 
-Run `perpsim train --help` for all options (transparency, capital, wake rate,
+Run `glass train --help` for all options (transparency, capital, wake rate,
 private signals, penalties, exposure cap). A trained policy can join any
-scenario through `marl_trading.futures.rl.policy.policy_agent_from_checkpoint`.
+scenario through `glass_sim.rl.policy.policy_agent_from_checkpoint`.
 
 Use many training seeds: agents trained on a handful of worlds memorize them
 and fail on unseen seeds.
@@ -379,9 +379,9 @@ and fail on unseen seeds.
 
 ```bash
 # observation with the last 20 trades and the 10 largest accounts (362 inputs)
-perpsim train --name my_tables_agent --trades-table 20 --accounts-table 10 --net-arch 256,256
+glass train --name my_tables_agent --trades-table 20 --accounts-table 10 --net-arch 256,256
 # continue training an existing agent on new worlds
-perpsim train --name my_agent_more --init-from checkpoints/futures/my_agent/model.zip --train-seeds 3000-3999
+glass train --name my_agent_more --init-from checkpoints/glass/my_agent/model.zip --train-seeds 3000-3999
 ```
 
 Who traded is described by observable properties (recent net flow, leverage,
@@ -389,14 +389,14 @@ return), never by name, and every field follows the transparency level.
 
 ### Several learning agents (MARL)
 
-`marl_trading.futures.rl.marl` trains several learners together with
+`glass_sim.rl.marl` trains several learners together with
 independent PPO in parallel markets (each learner has its own network,
 experience and exit-value reward; `--shared-policy` shares one network):
 
 ```bash
-python -m marl_trading.futures.rl.marl --name my_marl --learners 3 --timesteps 600000
-python -m marl_trading.futures.rl.marl --name my_marl_more --init-from checkpoints/futures/my_marl --train-seeds 4000-4999
-python -m marl_trading.futures.rl.marl_evaluate checkpoints/futures/my_marl --single checkpoints/futures/my_agent --seeds 31-40
+python -m glass_sim.rl.marl --name my_marl --learners 3 --timesteps 600000
+python -m glass_sim.rl.marl --name my_marl_more --init-from checkpoints/glass/my_marl --train-seeds 4000-4999
+python -m glass_sim.rl.marl_evaluate checkpoints/glass/my_marl --single checkpoints/glass/my_agent --seeds 31-40
 ```
 
 The evaluation compares the jointly trained learners with copies of a
@@ -408,8 +408,8 @@ fill quality and market quality.
 
 ```bash
 PYTHONPATH=src python scripts/paper/simulator_experiments.py   # scenario sweep, transparency experiment, example session
-scripts/futures_rl_queue.sh                                    # single-agent training runs (A, B, C x 3)
-scripts/futures_followup.sh                                    # evaluations, input analysis, MARL, extended run, figures
+scripts/glass_rl_queue.sh                                    # single-agent training runs (A, B, C x 3)
+scripts/glass_followup.sh                                    # evaluations, input analysis, MARL, extended run, figures
 PYTHONPATH=src python scripts/paper/make_figures.py            # paper/figures and paper/tables
 ```
 
@@ -423,7 +423,7 @@ PYTHONPATH=src python scripts/paper/make_figures.py            # paper/figures a
   prevention), account arithmetic (averaging, flips, liquidation price),
   margin, IOC/post-only/reduce-only rules, liquidation with bad debt,
   auto-deleveraging, funding direction, transparency gating, reproducibility,
-  paired exogenous paths and the external-agent loop: `pytest tests/test_futures_*.py`.
+  paired exogenous paths and the external-agent loop: `pytest tests/test_glass_*.py`.
 - **Stylized facts.** The reference ecology produces heavy-tailed returns whose
   kurtosis falls with the horizon, near-zero autocorrelation of 1-minute
   returns and positive autocorrelation of absolute returns. Calibration against

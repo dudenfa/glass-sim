@@ -1,7 +1,7 @@
 """Evaluate several agents trading together, on held-out seeds.
 
-    python -m marl_trading.futures.rl.marl_evaluate checkpoints/futures/marl3_s0 \\
-        --single checkpoints/futures/ppo_full_v2 --seeds 31-40
+    python -m glass_sim.rl.marl_evaluate checkpoints/glass/marl3_s0 \\
+        --single checkpoints/glass/ppo_full_v2 --seeds 31-40
 
 Each treatment adds the same number N of extra participants (same capital and
 decision rate) to the same market, so the treatments are directly comparable:
@@ -184,7 +184,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     report = {"n": args.n, "seeds": seeds, "duration": duration, "transparency": args.transparency or "scenario default", "marl_dir": str(marl_dir), "single_model": str(single), "rows": rows}
     text = format_report(report)
     print("\n" + text)
-    out = Path(args.out) if args.out else (marl_dir / f"eval_{args.seeds}_{args.transparency or 'default'}" if marl_dir else Path("artifacts/futures") / f"multi_eval_{args.seeds}")
+    out = Path(args.out) if args.out else (marl_dir / f"eval_{args.seeds}_{args.transparency or 'default'}" if marl_dir else Path("artifacts/glass") / f"multi_eval_{args.seeds}")
     out.mkdir(parents=True, exist_ok=True)
     (out / "report.txt").write_text(text + "\n")
     (out / "results.json").write_text(json.dumps(report, indent=2, default=str))

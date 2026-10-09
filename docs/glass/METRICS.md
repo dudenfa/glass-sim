@@ -1,8 +1,8 @@
 # Metrics reference
 
-Every field in the futures-market outputs: the text report (`perpsim run`,
+Every field in the futures-market outputs: the text report (`glass run`,
 `result.print_report()`), `summary.json`, `agents.json`, `groups.json`, the
-comparison reports (`perpsim compare`) and the viewer.
+comparison reports (`glass compare`) and the viewer.
 
 Units: prices in quote currency (the contract starts at 100), quantities in
 contracts, money in quote currency, `bps` = basis points (0.01%).
@@ -132,7 +132,7 @@ Identity: `total_pnl = realized_pnl + unrealized_pnl - fees_paid - funding_paid 
 | `maker_share` | maker contracts / all contracts traded by the group |
 | `net_position` | sum of members' positions at the end |
 
-## Comparisons (`perpsim compare`)
+## Comparisons (`glass compare`)
 
 - **Two runs:** `left`, `right`, `delta = right - left`, `%` relative to `|left|`,
   for every summary field, return by type, and the agents whose PnL changed most

@@ -2,7 +2,7 @@ import json
 import threading
 import urllib.request
 
-from marl_trading.futures.live import FuturesViewer, LiveSession
+from glass_sim.live import FuturesViewer, LiveSession
 
 
 def test_live_session_controls_and_state():
@@ -30,7 +30,7 @@ def test_viewer_serves_page_and_api():
     viewer.start()
     try:
         html = urllib.request.urlopen(viewer.url + "/").read().decode()
-        assert "Perp Market Viewer" in html
+        assert "GLASS Viewer" in html
         assert urllib.request.urlopen(viewer.url + "/static/app.js").status == 200
         state = json.loads(urllib.request.urlopen(viewer.url + "/api/state").read())
         assert "prices" in state and "accounts" in state

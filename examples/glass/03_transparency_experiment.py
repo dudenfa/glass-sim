@@ -1,6 +1,6 @@
 """Paired experiment: the same markets under three transparency levels.
 
-    PYTHONPATH=src python examples/futures/03_transparency_experiment.py
+    PYTHONPATH=src python examples/glass/03_transparency_experiment.py
 
 For each seed, the exogenous world (index path, news, private signals) is
 identical across the three treatments, because exogenous processes use their
@@ -11,7 +11,7 @@ can see, not from luck.
 import statistics
 import sys
 
-from marl_trading.futures import PerpetualMarket, Transparency, parse_duration, scenarios
+from glass_sim import PerpetualMarket, Transparency, parse_duration, scenarios
 
 SEEDS = range(1, int(sys.argv[1]) + 1) if len(sys.argv) > 1 else range(1, 6)
 LEVELS = (Transparency.ANONYMOUS, Transparency.ATTRIBUTED, Transparency.FULL)

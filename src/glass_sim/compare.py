@@ -2,7 +2,7 @@
 
 A *run spec* is a string of ``key=value`` pairs, for example
 ``"scenario=default seed=1 transparency=anonymous duration=1h"``, or the path
-of a directory written by ``SimulationResult.save`` (``perpsim run --out``).
+of a directory written by ``SimulationResult.save`` (``glass run --out``).
 
 Single comparison: ``delta = right - left`` and ``%`` relative to ``|left|``.
 

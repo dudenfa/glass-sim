@@ -1,6 +1,6 @@
 """Evaluate a trained agent on held-out seeds, next to baselines.
 
-    python -m marl_trading.futures.rl.evaluate checkpoints/futures/ppo_full_v1 --seeds 31-40
+    python -m glass_sim.rl.evaluate checkpoints/glass/ppo_full_v1 --seeds 31-40
 
 For every seed the same market (same scenario, seed and duration, hence the
 same exogenous world) is run once per *treatment*:
@@ -223,7 +223,7 @@ def format_evaluation(report: Dict[str, Any]) -> str:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Evaluate a trained futures-market agent on held-out seeds")
-    parser.add_argument("run_dir", help="directory written by marl_trading.futures.rl.train")
+    parser.add_argument("run_dir", help="directory written by glass_sim.rl.train")
     parser.add_argument("--seeds", default="31-40")
     parser.add_argument("--duration", default="4h")
     parser.add_argument("--treatments", default="model,scripted_mm,scripted_mm_fast,random,hold,none")

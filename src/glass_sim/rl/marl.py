@@ -22,7 +22,7 @@ network and optimizer of ``sb3_contrib.MaskablePPO``. Policies are saved as
 regular ``MaskablePPO`` checkpoints, so ``PolicyAgent``, the evaluation
 scripts and the viewer can use them directly.
 
-    python -m marl_trading.futures.rl.marl --name marl3_full --learners 3 --timesteps 600000
+    python -m glass_sim.rl.marl --name marl3_full --learners 3 --timesteps 600000
 """
 
 from __future__ import annotations
@@ -359,7 +359,7 @@ def train_marl(
     net_arch: Sequence[int] = (128, 128),
     shared_policy: bool = False,
     seed: int = 0,
-    out_root: str = "checkpoints/futures",
+    out_root: str = "checkpoints/glass",
     init_from: Optional[str] = None,
 ) -> Path:
     import torch
@@ -541,7 +541,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--net-arch", default="128,128")
     parser.add_argument("--shared-policy", action="store_true")
     parser.add_argument("--rollout", type=int, default=8192, help="transitions per learner between updates")
-    parser.add_argument("--out-root", default="checkpoints/futures")
+    parser.add_argument("--out-root", default="checkpoints/glass")
     parser.add_argument("--init-from", default=None, help="run directory whose marl_XX.zip learners are trained further")
     args = parser.parse_args(argv)
     from .train import _parse_seeds

@@ -3,13 +3,13 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "marl-trading"
+name = "glass-sim"
 version = "0.1.0"
-description = "Multi-agent market simulation: a transparent perpetual-futures exchange for AI trading agents, plus the original spot-market MARL thesis code"
-readme = "THESIS.md"
+description = "GLASS: a transparent perpetual-futures market simulator for multi-agent reinforcement learning (plus the legacy marl_trading spot-market thesis code)"
+readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "Proprietary"}
-authors = [{name = "Codex"}]
+authors = [{name = "dudenfa"}]
 dependencies = [
     "numpy>=1.26",
     "Pillow>=10.0",
@@ -25,13 +25,13 @@ rl = [
 ]
 
 [project.scripts]
-perpsim = "marl_trading.futures.__main__:main"
+glass = "glass_sim.__main__:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-"marl_trading.futures.live" = ["static/*"]
+"glass_sim.live" = ["static/*"]
 "marl_trading.live" = ["static/*"]
 
 [tool.setuptools.packages.find]

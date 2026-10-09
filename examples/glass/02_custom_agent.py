@@ -1,6 +1,6 @@
 """Write your own trading agent and add it to the market.
 
-    PYTHONPATH=src python examples/futures/02_custom_agent.py
+    PYTHONPATH=src python examples/glass/02_custom_agent.py
 
 An agent is a class with an ``on_wakeup(view, rng)`` method that returns a
 list of actions. ``view`` is what the agent can see (depending on the market's
@@ -9,7 +9,7 @@ transparency level); ``rng`` is the agent's own random generator.
 
 from dataclasses import replace
 
-from marl_trading.futures import (
+from glass_sim import (
     Agent,
     AgentSpec,
     LimitOrder,

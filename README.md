@@ -1,37 +1,48 @@
-# marl-trading
+# GLASS
 
-Multi-agent market simulation for a university thesis on reinforcement learning in trading.
+**GLASS** is a transparent perpetual-futures market simulator for multi-agent
+reinforcement learning. Agents trade long and short with leverage and margin,
+pay funding, and get liquidated in a public limit order book whose
+transparency (anonymous, attributed, or fully public positions as on
+Hyperliquid) is an experimental setting. It ships nine scripted trader types,
+a live browser viewer, a Gymnasium environment, a multi-agent (IPPO) trainer,
+and an evaluation protocol with paired held-out seeds and fair controls.
 
-The repository now contains two simulators:
+| | name |
+|---|---|
+| simulator | GLASS |
+| repository / pip project | `glass-sim` |
+| Python package | `glass_sim` |
+| command | `glass` |
 
-- **`marl_trading.futures` (new, on branch `transparent-futures`)**: a transparent
-  perpetual-futures exchange for AI trading agents. Agents trade long and short
-  with leverage and margin, pay funding, and get liquidated, in a market whose
-  transparency (anonymous, attributed, or fully public positions like
-  Hyperliquid) is an experimental setting. It comes with nine scripted trader
-  types, a live browser viewer, and a hook for RL agents.
-  See **[docs/futures/README.md](docs/futures/README.md)**.
-- **The original spot market** (`marl_trading.market`, `marl_trading.rl`,
-  `marl_trading.marl`): the one-asset spot ecology used for the RL and MARL
-  thesis experiments, frozen at tag `v0.1-spot-thesis`.
+Documentation: **[docs/glass/README.md](docs/glass/README.md)** · metrics:
+[docs/glass/METRICS.md](docs/glass/METRICS.md) · project state:
+[PROJECT_STATE_V2.md](PROJECT_STATE_V2.md) · paper material: [paper/](paper/).
 
-### Futures market in 30 seconds
+The repository also keeps the **legacy spot-market thesis code**
+(`marl_trading.market`, `marl_trading.rl`, `marl_trading.marl`): the one-asset
+spot ecology used for the earlier RL and MARL thesis experiments, frozen at tag
+`v0.1-spot-thesis` (see `PROJECT_STATE.md`).
+
+### GLASS in 30 seconds
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,analysis]"
-perpsim run --scenario default --seed 1        # 4 simulated hours, ~5 s
-perpsim serve --open                           # live viewer on http://127.0.0.1:8766
+glass run --scenario default --seed 1        # 4 simulated hours, ~5 s
+glass serve --open                           # live viewer on http://127.0.0.1:8766
 ```
 
 ```python
-from marl_trading.futures import PerpetualMarket, scenarios
+from glass_sim import PerpetualMarket, scenarios
 
 result = PerpetualMarket(scenarios.default(seed=1)).run()
 result.print_report()
 ```
 
-The rest of this README describes the original spot-market code.
+## Legacy spot-market code
+
+The rest of this README describes the original spot-market code (V1).
 
 ## Current Focus
 

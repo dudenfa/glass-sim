@@ -2,14 +2,14 @@
 
 Quick start::
 
-    from marl_trading.futures import PerpetualMarket, scenarios
+    from glass_sim import PerpetualMarket, scenarios
 
     results = PerpetualMarket(scenarios.default(seed=1)).run()
     results.print_report()
 
 Write your own agent by subclassing ``Agent`` and returning actions
 (``LimitOrder``, ``MarketOrder``, ``Cancel``, ``CancelAll``) from ``on_wakeup``;
-add it to a scenario with an ``AgentSpec``. See ``docs/futures/README.md``.
+add it to a scenario with an ``AgentSpec``. See ``docs/glass/README.md``.
 """
 
 from . import scenarios

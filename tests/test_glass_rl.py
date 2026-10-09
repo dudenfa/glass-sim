@@ -3,10 +3,10 @@ import pytest
 
 pytest.importorskip("gymnasium")
 
-from marl_trading.futures import PerpetualMarket, scenarios
-from marl_trading.futures.rl import ACTION_NAMES, EnvConfig, ObservationConfig, ObservationEncoder, PerpTradingEnv, exit_value
-from marl_trading.futures.rl.policy import HoldPolicy, PolicyAgent, RandomPolicy
-from marl_trading.futures.types import Transparency
+from glass_sim import PerpetualMarket, scenarios
+from glass_sim.rl import ACTION_NAMES, EnvConfig, ObservationConfig, ObservationEncoder, PerpTradingEnv, exit_value
+from glass_sim.rl.policy import HoldPolicy, PolicyAgent, RandomPolicy
+from glass_sim.types import Transparency
 
 
 def small_env(**overrides):
@@ -102,7 +102,7 @@ def test_parallel_workers_use_disjoint_seeds():
 
 
 def test_multi_agent_market_rewards_add_up_per_learner():
-    from marl_trading.futures.rl.marl import MultiAgentConfig, MultiAgentMarket
+    from glass_sim.rl.marl import MultiAgentConfig, MultiAgentMarket
 
     env = MultiAgentMarket(MultiAgentConfig(scenario="small", n_learners=3, episode_duration=600.0))
     request = env.reset(seed=5)
@@ -129,7 +129,7 @@ def test_multi_agent_market_rewards_add_up_per_learner():
 
 def test_ppo_update_handles_a_single_sample_last_minibatch():
     import torch
-    from marl_trading.futures.rl.marl import _make_model, ppo_update
+    from glass_sim.rl.marl import _make_model, ppo_update
 
     model = _make_model(32, 9, [16, 16], 3e-4, seed=0)
     n = 257  # 256 + 1: the last minibatch has one sample

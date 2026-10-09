@@ -1,9 +1,9 @@
 """Run the reference market for one simulated hour and inspect the results.
 
-    PYTHONPATH=src python examples/futures/01_quickstart.py
+    PYTHONPATH=src python examples/glass/01_quickstart.py
 """
 
-from marl_trading.futures import PerpetualMarket, parse_duration, scenarios
+from glass_sim import PerpetualMarket, parse_duration, scenarios
 
 config = scenarios.default(seed=1, duration=parse_duration("1h"))
 result = PerpetualMarket(config).run()

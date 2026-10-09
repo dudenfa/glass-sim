@@ -2,9 +2,9 @@ import math
 
 import pytest
 
-from marl_trading.futures.account import MarginAccount
-from marl_trading.futures.book import OrderBook, RestingOrder
-from marl_trading.futures.types import LimitOrder, MarketOrder, Side, TimeInForce
+from glass_sim.account import MarginAccount
+from glass_sim.book import OrderBook, RestingOrder
+from glass_sim.types import LimitOrder, MarketOrder, Side, TimeInForce
 
 
 def _order(order_id, agent, side, price, qty, seq):

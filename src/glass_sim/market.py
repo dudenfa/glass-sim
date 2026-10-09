@@ -15,7 +15,7 @@
 
 Typical use::
 
-    from marl_trading.futures import PerpetualMarket, scenarios
+    from glass_sim import PerpetualMarket, scenarios
 
     market = PerpetualMarket(scenarios.default(seed=1))
     results = market.run()

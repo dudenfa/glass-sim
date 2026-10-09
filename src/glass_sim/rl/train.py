@@ -1,8 +1,8 @@
 """Train a single learning agent with MaskablePPO.
 
-    python -m marl_trading.futures.rl.train --name ppo_full_v1 --timesteps 200000
+    python -m glass_sim.rl.train --name ppo_full_v1 --timesteps 200000
 
-Writes to ``checkpoints/futures/<name>/``:
+Writes to ``checkpoints/glass/<name>/``:
 
 - ``model.zip``: the final MaskablePPO policy;
 - ``checkpoints/``: intermediate policies;
@@ -110,7 +110,7 @@ def train(
     timesteps: int = 200_000,
     n_envs: int = 8,
     seed: int = 0,
-    out_root: str = "checkpoints/futures",
+    out_root: str = "checkpoints/glass",
     ppo_kwargs: Optional[Dict[str, Any]] = None,
     checkpoint_every: int = 50_000,
     init_from: Optional[str] = None,
@@ -202,7 +202,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--liquidation-penalty", type=float, default=0.05)
     parser.add_argument("--inactivity-penalty", type=float, default=0.0)
     parser.add_argument("--max-leverage", type=float, default=10.0)
-    parser.add_argument("--out-root", default="checkpoints/futures")
+    parser.add_argument("--out-root", default="checkpoints/glass")
     parser.add_argument("--init-from", default=None, help="model.zip to continue training from")
     args = parser.parse_args(argv)
 

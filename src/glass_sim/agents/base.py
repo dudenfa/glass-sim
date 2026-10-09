@@ -4,7 +4,7 @@ To create an agent, subclass ``Agent`` and implement ``on_wakeup``:
 
 .. code-block:: python
 
-    from marl_trading.futures import Agent, MarketOrder, Side
+    from glass_sim import Agent, MarketOrder, Side
 
     class CoinFlipper(Agent):
         agent_type = "coin_flipper"

@@ -1,6 +1,6 @@
 """Drive an agent from outside the simulator: the hook for reinforcement learning.
 
-    PYTHONPATH=src python examples/futures/04_external_agent_loop.py
+    PYTHONPATH=src python examples/glass/04_external_agent_loop.py
 
 An ``ExternalAgent`` without a policy pauses the market every time it wakes
 up. ``run_until_decision()`` returns its id; you inspect ``market.view(id)``
@@ -11,7 +11,7 @@ layer on top of this loop.
 
 from dataclasses import replace
 
-from marl_trading.futures import AgentSpec, ExternalAgent, MarketOrder, PerpetualMarket, Side, parse_duration, scenarios
+from glass_sim import AgentSpec, ExternalAgent, MarketOrder, PerpetualMarket, Side, parse_duration, scenarios
 
 base = scenarios.default(seed=7, duration=parse_duration("30m"))
 learner = AgentSpec(ExternalAgent, count=1, collateral=50_000.0, params={"wake_interval": 5.0}, external=True, prefix="rl")

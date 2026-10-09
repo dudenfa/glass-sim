@@ -2,7 +2,7 @@
 
 Run it with::
 
-    python -m marl_trading.futures serve --scenario default --seed 1
+    python -m glass_sim serve --scenario default --seed 1
 
 then open http://127.0.0.1:8766. Endpoints:
 
@@ -47,7 +47,7 @@ def _clean(value: Any) -> Any:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "PerpViewer/1.0"
+    server_version = "GLASS-Viewer/1.0"
 
     @property
     def session(self) -> LiveSession:

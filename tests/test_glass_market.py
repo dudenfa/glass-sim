@@ -3,7 +3,7 @@ from dataclasses import replace
 
 import pytest
 
-from marl_trading.futures import (
+from glass_sim import (
     Agent,
     AgentSpec,
     Cancel,

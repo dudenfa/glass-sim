@@ -2,18 +2,18 @@
 
 Examples::
 
-    python -m marl_trading.futures scenarios
-    python -m marl_trading.futures run --scenario default --seed 1 --duration 4h --out artifacts/futures/default_s1
-    python -m marl_trading.futures serve --scenario default --seed 1 --open
-    python -m marl_trading.futures compare "scenario=default seed=1" "scenario=default seed=1 transparency=anonymous"
-    python -m marl_trading.futures compare "scenario=default" "scenario=anonymous" --seeds 1-10
-    python -m marl_trading.futures compare artifacts/futures/run_a artifacts/futures/run_b --agents
+    python -m glass_sim scenarios
+    python -m glass_sim run --scenario default --seed 1 --duration 4h --out artifacts/glass/default_s1
+    python -m glass_sim serve --scenario default --seed 1 --open
+    python -m glass_sim compare "scenario=default seed=1" "scenario=default seed=1 transparency=anonymous"
+    python -m glass_sim compare "scenario=default" "scenario=anonymous" --seeds 1-10
+    python -m glass_sim compare artifacts/glass/run_a artifacts/glass/run_b --agents
 
-    python -m marl_trading.futures train --name ppo_full_v1 --timesteps 500000
-    python -m marl_trading.futures evaluate checkpoints/futures/ppo_full_v1 --seeds 31-40
-    python -m marl_trading.futures serve --rl checkpoints/futures/ppo_full_v1
+    python -m glass_sim train --name ppo_full_v1 --timesteps 500000
+    python -m glass_sim evaluate checkpoints/glass/ppo_full_v1 --seeds 31-40
+    python -m glass_sim serve --rl checkpoints/glass/ppo_full_v1
 
-(``perpsim`` is the same command once the package is installed.)
+(``glass`` is the same command once the package is installed.)
 """
 
 from __future__ import annotations
@@ -104,7 +104,7 @@ def cmd_scenarios(_args: argparse.Namespace) -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m marl_trading.futures", description="Transparent perpetual-futures market simulator")
+    parser = argparse.ArgumentParser(prog="python -m glass_sim", description="Transparent perpetual-futures market simulator")
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="run a simulation and print a report")
@@ -134,9 +134,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     compare.add_argument("--verbose", action="store_true", help="print progress while running panels")
     compare.set_defaults(func=cmd_compare)
 
-    train = sub.add_parser("train", help="train an RL agent (see python -m marl_trading.futures.rl.train --help)", add_help=False)
+    train = sub.add_parser("train", help="train an RL agent (see python -m glass_sim.rl.train --help)", add_help=False)
     train.set_defaults(func=None, passthrough="train")
-    evaluate = sub.add_parser("evaluate", help="evaluate a trained RL agent (see python -m marl_trading.futures.rl.evaluate --help)", add_help=False)
+    evaluate = sub.add_parser("evaluate", help="evaluate a trained RL agent (see python -m glass_sim.rl.evaluate --help)", add_help=False)
     evaluate.set_defaults(func=None, passthrough="evaluate")
 
     listing = sub.add_parser("scenarios", help="list available scenarios")

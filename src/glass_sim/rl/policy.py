@@ -41,7 +41,7 @@ class RandomPolicy:
 
 
 class ModelPolicy:
-    """A MaskablePPO checkpoint saved by ``marl_trading.futures.rl.train``."""
+    """A MaskablePPO checkpoint saved by ``glass_sim.rl.train``."""
 
     name = "model"
 

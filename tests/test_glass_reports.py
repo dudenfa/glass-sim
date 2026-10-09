@@ -1,10 +1,10 @@
 import pytest
 
-from marl_trading.futures import PerpetualMarket, scenarios
-from marl_trading.futures.account import MarginAccount
-from marl_trading.futures.compare import compare_panels, compare_runs, config_from_spec, parse_seeds, parse_spec
-from marl_trading.futures.results import SavedRun
-from marl_trading.futures.types import Side, Transparency
+from glass_sim import PerpetualMarket, scenarios
+from glass_sim.account import MarginAccount
+from glass_sim.compare import compare_panels, compare_runs, config_from_spec, parse_seeds, parse_spec
+from glass_sim.results import SavedRun
+from glass_sim.types import Side, Transparency
 
 
 def test_path_metrics_track_peak_drawdown_and_exposure():
