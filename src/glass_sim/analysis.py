@@ -14,12 +14,14 @@ them:
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Optional
 
 import numpy as np
 
 
 def log_returns(prices: Sequence[float], step: int = 1) -> np.ndarray:
+    """Log returns of ``prices`` sampled every ``step`` records, skipping missing values."""
     values = np.asarray([p for p in prices if p is not None and p > 0], dtype=float)
     if len(values) <= step:
         return np.zeros(0)
@@ -28,6 +30,7 @@ def log_returns(prices: Sequence[float], step: int = 1) -> np.ndarray:
 
 
 def autocorrelation(series: np.ndarray, lag: int) -> Optional[float]:
+    """Autocorrelation at ``lag``; ``None`` when the series is too short to mean anything."""
     if len(series) <= lag + 2:
         return None
     x = series[:-lag] - series[:-lag].mean()
@@ -39,6 +42,7 @@ def autocorrelation(series: np.ndarray, lag: int) -> Optional[float]:
 
 
 def excess_kurtosis(series: np.ndarray) -> Optional[float]:
+    """Fourth standardized moment minus 3 (0 for a normal distribution); ``None`` for tiny samples."""
     if len(series) < 8:
         return None
     centered = series - series.mean()
@@ -48,9 +52,11 @@ def excess_kurtosis(series: np.ndarray) -> Optional[float]:
     return float((centered**4).mean() / variance**2 - 3.0)
 
 
-def stylized_facts(prices: Sequence[float], record_interval: float = 1.0, horizons_seconds: Sequence[int] = (10, 60, 300)) -> Dict[str, Dict[str, Optional[float]]]:
+def stylized_facts(
+    prices: Sequence[float], record_interval: float = 1.0, horizons_seconds: Sequence[int] = (10, 60, 300)
+) -> dict[str, dict[str, Optional[float]]]:
     """Kurtosis and autocorrelations of returns at several sampling horizons."""
-    out: Dict[str, Dict[str, Optional[float]]] = {}
+    out: dict[str, dict[str, Optional[float]]] = {}
     for horizon in horizons_seconds:
         step = max(1, int(round(horizon / record_interval)))
         returns = log_returns(prices, step)
@@ -72,7 +78,7 @@ def _clean(values: Sequence[Optional[float]]) -> np.ndarray:
     return np.asarray([v for v in values if v is not None], dtype=float)
 
 
-def market_summary(bars: Dict[str, List[Optional[float]]], record_interval: float = 1.0) -> Dict[str, Optional[float]]:
+def market_summary(bars: dict[str, list[Optional[float]]], record_interval: float = 1.0) -> dict[str, Optional[float]]:
     """Liquidity, price-discovery and activity metrics from the recorded bars."""
     mids = bars["mid"]
     spreads = _clean(bars["spread"])

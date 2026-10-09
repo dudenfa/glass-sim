@@ -2,7 +2,7 @@
 
     python -m glass_sim.rl.train --name ppo_full_v1 --timesteps 200000
 
-Writes to ``checkpoints/glass/<name>/``:
+Writes to ``checkpoints/<name>/``:
 
 - ``model.zip``: the final MaskablePPO policy;
 - ``checkpoints/``: intermediate policies;
@@ -17,20 +17,21 @@ import argparse
 import csv
 import json
 import time
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import numpy as np
 
 from .actions import ACTION_NAMES, ActionConfig
-from .env import EnvConfig, LEARNER_ID, PerpTradingEnv, make_env
+from .env import LEARNER_ID, EnvConfig, PerpTradingEnv
 from .observation import ObservationConfig
 from .reward import RewardConfig
 
 
 def _parse_seeds(text: str) -> tuple:
-    seeds: List[int] = []
+    """``"1-8"`` or ``"1,3,5"`` to a tuple of seeds."""
+    seeds: list[int] = []
     for part in text.split(","):
         if "-" in part:
             a, b = part.split("-", 1)
@@ -41,6 +42,7 @@ def _parse_seeds(text: str) -> tuple:
 
 
 def _episode_logger(path: Path):
+    """A callback writing one CSV row per finished episode."""
     from stable_baselines3.common.callbacks import BaseCallback
 
     class EpisodeLogger(BaseCallback):
@@ -53,11 +55,11 @@ def _episode_logger(path: Path):
             self.writer.writerow(["timesteps", "episode", "return", "pnl_pct", "liquidations", "length", "seconds"] + [f"act_{n}" for n in ACTION_NAMES])
             self.episode = 0
             self.started = time.perf_counter()
-            self.returns: Dict[int, float] = {}
-            self.lengths: Dict[int, int] = {}
-            self.liqs: Dict[int, float] = {}
-            self.actions: Dict[int, np.ndarray] = {}
-            self.recent: List[float] = []
+            self.returns: dict[int, float] = {}
+            self.lengths: dict[int, int] = {}
+            self.liqs: dict[int, float] = {}
+            self.actions: dict[int, np.ndarray] = {}
+            self.recent: list[float] = []
 
         def _on_step(self) -> bool:
             infos = self.locals["infos"]
@@ -72,11 +74,21 @@ def _episode_logger(path: Path):
                     acts[ACTION_NAMES.index(info["action"])] += 1
                 if dones[i]:
                     self.episode += 1
-                    equity = info.get("equity", 0.0)
                     pnl_pct = info.get("final_pnl_pct", None)
                     length = self.lengths[i]
                     mix = (acts / max(1, length)).round(4).tolist()
-                    self.writer.writerow([self.num_timesteps, self.episode, round(self.returns[i], 4), pnl_pct, self.liqs[i], length, round(time.perf_counter() - self.started, 1)] + mix)
+                    self.writer.writerow(
+                        [
+                            self.num_timesteps,
+                            self.episode,
+                            round(self.returns[i], 4),
+                            pnl_pct,
+                            self.liqs[i],
+                            length,
+                            round(time.perf_counter() - self.started, 1),
+                        ]
+                        + mix
+                    )
                     self.handle.flush()
                     self.recent.append(self.returns[i])
                     self.recent = self.recent[-20:]
@@ -110,11 +122,12 @@ def train(
     timesteps: int = 200_000,
     n_envs: int = 8,
     seed: int = 0,
-    out_root: str = "checkpoints/glass",
-    ppo_kwargs: Optional[Dict[str, Any]] = None,
+    out_root: str = "checkpoints",
+    ppo_kwargs: Optional[dict[str, Any]] = None,
     checkpoint_every: int = 50_000,
     init_from: Optional[str] = None,
 ) -> Path:
+    """Train one MaskablePPO agent and return its run directory."""
     from sb3_contrib import MaskablePPO
     from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
     from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
@@ -124,6 +137,8 @@ def train(
 
     # Worker k of n plays seeds k, k+n, k+2n, ... so workers never replay each other's worlds.
     def factory(rank: int):
+        """Environment constructor for worker ``rank``, with its own seed stride."""
+
         def _init():
             env = _PnLInfoEnv(env_config)
             env.seed_offset = rank
@@ -181,7 +196,8 @@ def train(
     return out
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
+    """Command-line entry point (``glass train``)."""
     parser = argparse.ArgumentParser(description="Train one MaskablePPO agent in the perpetual-futures market")
     parser.add_argument("--name", required=True)
     parser.add_argument("--timesteps", type=int, default=200_000)
@@ -202,7 +218,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--liquidation-penalty", type=float, default=0.05)
     parser.add_argument("--inactivity-penalty", type=float, default=0.0)
     parser.add_argument("--max-leverage", type=float, default=10.0)
-    parser.add_argument("--out-root", default="checkpoints/glass")
+    parser.add_argument("--out-root", default="checkpoints")
     parser.add_argument("--init-from", default=None, help="model.zip to continue training from")
     args = parser.parse_args(argv)
 

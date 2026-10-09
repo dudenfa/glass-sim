@@ -1,42 +1,90 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "glass-sim"
 version = "0.1.0"
-description = "GLASS: a transparent perpetual-futures market simulator for multi-agent reinforcement learning (plus the legacy marl_trading spot-market thesis code)"
+description = "GLASS: a transparent perpetual-futures market simulator for multi-agent reinforcement learning"
 readme = "README.md"
-requires-python = ">=3.9"
-license = {text = "Proprietary"}
-authors = [{name = "dudenfa"}]
-dependencies = [
-    "numpy>=1.26",
-    "Pillow>=10.0",
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Martino Mantovani" }]
+keywords = [
+    "market simulation",
+    "agent-based modelling",
+    "limit order book",
+    "perpetual futures",
+    "reinforcement learning",
+    "multi-agent reinforcement learning",
+    "market microstructure",
+    "transparency",
 ]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
-analysis = ["pandas>=2.0"]
+# Reinforcement learning: Gymnasium environment, MaskablePPO training, MARL.
 rl = [
     "gymnasium>=0.29,<1.0",
     "stable-baselines3>=2.3,<3.0",
     "sb3-contrib>=2.3,<3.0",
 ]
+# DataFrame export and the paper figures.
+analysis = ["pandas>=2.0", "matplotlib>=3.7"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+all = ["glass-sim[rl,analysis,dev]"]
 
 [project.scripts]
 glass = "glass_sim.__main__:main"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
+[project.urls]
+Repository = "https://github.com/dudenfa/glass-sim"
+Documentation = "https://github.com/dudenfa/glass-sim/blob/main/docs/user-guide.md"
+Issues = "https://github.com/dudenfa/glass-sim/issues"
 
-[tool.setuptools.package-data]
-"glass_sim.live" = ["static/*"]
-"marl_trading.live" = ["static/*"]
+[tool.setuptools]
+package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["glass_sim*"]
+
+[tool.setuptools.package-data]
+"glass_sim.live" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = [".", "src"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 160
+target-version = "py310"
+src = ["src", "tests", "examples", "experiments"]
+extend-exclude = ["legacy", "paper/RL___MARL_in_Finance_Trading_Simulation"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",   # long lines are allowed where they keep a table or a formula on one line
+    "B008",   # dataclass default factories are intentional
+    "UP007",  # keep Optional[...] for readability with Python 3.10 users
+    "UP045",
+    "E731",   # small inline lambdas are used as local helpers
+    "E741",   # short loop names (l, i) in comprehensions
+    "B023",   # helpers are called inside the loop that defines them
+    "B905",   # zip() length checks are not needed here
+]

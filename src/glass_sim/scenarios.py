@@ -14,8 +14,8 @@ e.g. ``scenarios.default(seed=3, duration=parse_duration("1h"))``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
-from typing import Callable, Dict, List, Tuple
 
 from .agents import (
     BasisArbitrageur,
@@ -28,11 +28,12 @@ from .agents import (
     NoiseTrader,
     Whale,
 )
-from .config import AgentSpec, HOUR, IndexConfig, MarketConfig, NewsConfig
+from .config import HOUR, AgentSpec, IndexConfig, MarketConfig, NewsConfig
 from .types import Transparency
 
 
-def default_population(retail: int = 60, retail_leverage: Tuple[float, float] = (3.0, 40.0)) -> Tuple[AgentSpec, ...]:
+def default_population(retail: int = 60, retail_leverage: tuple[float, float] = (3.0, 40.0)) -> tuple[AgentSpec, ...]:
+    """The reference ecology; ``retail`` and ``retail_leverage`` are parameters because scenarios vary them."""
     return (
         AgentSpec(
             MarketMaker,
@@ -147,7 +148,7 @@ def small(**overrides) -> MarketConfig:
     return replace(config, **overrides)
 
 
-SCENARIOS: Dict[str, Callable[..., MarketConfig]] = {
+SCENARIOS: dict[str, Callable[..., MarketConfig]] = {
     "default": default,
     "anonymous": anonymous,
     "attributed": attributed,
@@ -160,6 +161,7 @@ SCENARIOS: Dict[str, Callable[..., MarketConfig]] = {
 
 
 def get(name: str, **overrides) -> MarketConfig:
+    """Build a scenario by name; the ``KeyError`` lists the valid names."""
     try:
         factory = SCENARIOS[name]
     except KeyError as exc:
@@ -167,5 +169,6 @@ def get(name: str, **overrides) -> MarketConfig:
     return factory(**overrides)
 
 
-def names() -> List[str]:
+def names() -> list[str]:
+    """Sorted scenario names (the CLI choices)."""
     return sorted(SCENARIOS)

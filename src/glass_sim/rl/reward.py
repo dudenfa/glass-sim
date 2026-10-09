@@ -1,6 +1,6 @@
 """Reward for learning agents.
 
-Design (see PROJECT_STATE_V2.md, "Reward design"):
+Design (see docs/research/PROJECT_STATE.md, "Reward design"):
 
 The base reward is the change, between two consecutive decisions, of the
 account's **exit value**: what the account would be worth if it closed its
@@ -39,7 +39,7 @@ comparable across capital sizes (default: 1 unit = 1% of initial capital).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING
 
 from ..types import Side
 
@@ -49,6 +49,8 @@ if TYPE_CHECKING:  # pragma: no cover
 
 @dataclass(frozen=True)
 class RewardConfig:
+    """Reward scale and penalties; the module docstring explains each."""
+
     scale: float = 100.0
     liquidation_penalty: float = 0.05
     leverage_penalty: float = 0.0
@@ -57,7 +59,7 @@ class RewardConfig:
     unfillable_haircut: float = 0.10
 
 
-def exit_value(market: "PerpetualMarket", agent_id: str, haircut: float = 0.10) -> float:
+def exit_value(market: PerpetualMarket, agent_id: str, haircut: float = 0.10) -> float:
     """Account value if the whole position were closed now against the book."""
     account = market.accounts[agent_id]
     position = account.position
@@ -82,7 +84,7 @@ def exit_value(market: "PerpetualMarket", agent_id: str, haircut: float = 0.10) 
 class RewardTracker:
     """Computes the reward between consecutive decisions of one agent."""
 
-    market: "PerpetualMarket"
+    market: PerpetualMarket
     agent_id: str
     config: RewardConfig = field(default_factory=RewardConfig)
 
@@ -90,6 +92,7 @@ class RewardTracker:
         self.reset()
 
     def reset(self) -> None:
+        """Re-baseline on the current state (episode start)."""
         account = self.market.accounts[self.agent_id]
         self.initial = account.initial_collateral
         self._value = exit_value(self.market, self.agent_id, self.config.unfillable_haircut)
@@ -98,7 +101,8 @@ class RewardTracker:
         self._funding = account.funding_paid
         self._realized = account.realized_pnl
 
-    def step(self) -> "tuple[float, Dict[str, float]]":
+    def step(self) -> tuple[float, dict[str, float]]:
+        """Reward since the previous call, plus a breakdown for logging."""
         cfg = self.config
         account = self.market.accounts[self.agent_id]
         value = exit_value(self.market, self.agent_id, cfg.unfillable_haircut)

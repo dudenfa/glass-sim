@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Optional
 
 import numpy as np
 
@@ -31,7 +32,7 @@ def realized_vol_per_second(prices: Sequence[float]) -> float:
     return float(returns.std())
 
 
-def move_toward(view: MarketView, target: int, max_clip: int, tag: str = "") -> List[Action]:
+def move_toward(view: MarketView, target: int, max_clip: int, tag: str = "") -> list[Action]:
     """Market orders that move the position toward ``target`` by at most ``max_clip`` contracts.
 
     Reducing trades are sent ``reduce_only`` so they never fail on margin.
@@ -49,7 +50,7 @@ def move_toward(view: MarketView, target: int, max_clip: int, tag: str = "") -> 
     reducing = position != 0 and (position > 0) != (side is Side.BUY)
     if reducing:
         reduce_qty = min(quantity, abs(position))
-        actions: List[Action] = [MarketOrder(side, reduce_qty, reduce_only=True, tag=tag)]
+        actions: list[Action] = [MarketOrder(side, reduce_qty, reduce_only=True, tag=tag)]
         if quantity > reduce_qty:
             actions.append(MarketOrder(side, quantity - reduce_qty, tag=tag))
         return actions
@@ -62,14 +63,17 @@ def capacity(view: MarketView, leverage: float) -> int:
 
 
 def clamp(value: float, low: float, high: float) -> float:
+    """Clip ``value`` to ``[low, high]``."""
     return max(low, min(high, value))
 
 
 def sign(value: float) -> int:
+    """-1, 0 or 1."""
     return 1 if value > 0 else (-1 if value < 0 else 0)
 
 
 def safe_log_ratio(a: Optional[float], b: Optional[float]) -> float:
+    """``log(a / b)``, or 0 when either side is missing or non-positive."""
     if not a or not b or a <= 0 or b <= 0:
         return 0.0
     return math.log(a / b)

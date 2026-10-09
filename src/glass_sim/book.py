@@ -17,13 +17,16 @@ from __future__ import annotations
 
 from bisect import bisect_left, insort
 from collections import deque
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Deque, Dict, Iterator, List, Optional, Tuple
+from typing import Optional
 
 from .types import Side, TimeInForce
 
 
 class RestingOrder:
+    """An order in the book; ``remaining`` and ``active`` are mutated in place by matching and cancels."""
+
     __slots__ = ("order_id", "agent_id", "side", "price", "quantity", "remaining", "time", "seq", "tif", "active", "tag")
 
     def __init__(
@@ -56,7 +59,7 @@ class RestingOrder:
 
 @dataclass
 class _Level:
-    orders: Deque[RestingOrder] = field(default_factory=deque)
+    orders: deque[RestingOrder] = field(default_factory=deque)
     total: int = 0
     count: int = 0
 
@@ -72,17 +75,21 @@ class Match:
 
 @dataclass
 class MatchResult:
-    matches: List[Match]
-    self_trade_canceled: List[RestingOrder]
+    """Outcome of one incoming order: fills, orders canceled by self-trade prevention, total filled."""
+
+    matches: list[Match]
+    self_trade_canceled: list[RestingOrder]
     filled: int
 
 
 class OrderBook:
+    """Two sorted price ladders of FIFO levels plus an order-id index."""
+
     def __init__(self) -> None:
-        self._levels: Dict[Side, Dict[int, _Level]] = {Side.BUY: {}, Side.SELL: {}}
+        self._levels: dict[Side, dict[int, _Level]] = {Side.BUY: {}, Side.SELL: {}}
         # Both ladders are ascending; best bid is the last bid price, best ask the first ask price.
-        self._prices: Dict[Side, List[int]] = {Side.BUY: [], Side.SELL: []}
-        self._orders: Dict[str, RestingOrder] = {}
+        self._prices: dict[Side, list[int]] = {Side.BUY: [], Side.SELL: []}
+        self._orders: dict[str, RestingOrder] = {}
 
     # ------------------------------------------------------------------ queries
 
@@ -93,38 +100,45 @@ class OrderBook:
         return order_id in self._orders
 
     def get(self, order_id: str) -> Optional[RestingOrder]:
+        """Resting order by id, or ``None``."""
         return self._orders.get(order_id)
 
     def best_bid(self) -> Optional[int]:
+        """Best bid in ticks (``None`` when empty)."""
         prices = self._prices[Side.BUY]
         return prices[-1] if prices else None
 
     def best_ask(self) -> Optional[int]:
+        """Best ask in ticks (``None`` when empty)."""
         prices = self._prices[Side.SELL]
         return prices[0] if prices else None
 
     def best(self, side: Side) -> Optional[int]:
+        """Best price of ``side`` in ticks."""
         return self.best_bid() if side is Side.BUY else self.best_ask()
 
     def mid(self) -> Optional[float]:
+        """Mid in ticks (``None`` when a side is empty)."""
         bid, ask = self.best_bid(), self.best_ask()
         if bid is None or ask is None:
             return None
         return (bid + ask) / 2.0
 
     def spread(self) -> Optional[int]:
+        """Ask minus bid in ticks (``None`` when a side is empty)."""
         bid, ask = self.best_bid(), self.best_ask()
         if bid is None or ask is None:
             return None
         return ask - bid
 
     def _ladder(self, side: Side) -> Iterator[int]:
+        """Prices of ``side`` from best to worst."""
         prices = self._prices[side]
         return reversed(prices) if side is Side.BUY else iter(prices)
 
-    def levels(self, side: Side, depth: int = 10) -> List[Tuple[int, int, int]]:
+    def levels(self, side: Side, depth: int = 10) -> list[tuple[int, int, int]]:
         """Aggregated depth: ``[(price, total_quantity, order_count), ...]`` best first."""
-        out: List[Tuple[int, int, int]] = []
+        out: list[tuple[int, int, int]] = []
         book = self._levels[side]
         for price in self._ladder(side):
             level = book[price]
@@ -133,9 +147,9 @@ class OrderBook:
                 break
         return out
 
-    def orders(self, side: Side, depth: int = 10) -> List[RestingOrder]:
+    def orders(self, side: Side, depth: int = 10) -> list[RestingOrder]:
         """Order-level (L3) view of the best ``depth`` price levels, in priority order."""
-        out: List[RestingOrder] = []
+        out: list[RestingOrder] = []
         book = self._levels[side]
         seen = 0
         for price in self._ladder(side):
@@ -148,6 +162,7 @@ class OrderBook:
         return out
 
     def depth_within(self, side: Side, ticks_from_best: int) -> int:
+        """Resting contracts within ``ticks_from_best`` of the best price on ``side``."""
         best = self.best(side)
         if best is None:
             return 0
@@ -159,10 +174,11 @@ class OrderBook:
             total += book[price].total
         return total
 
-    def orders_of(self, agent_id: str) -> List[RestingOrder]:
+    def orders_of(self, agent_id: str) -> list[RestingOrder]:
+        """Every resting order of ``agent_id``."""
         return [order for order in self._orders.values() if order.agent_id == agent_id]
 
-    def estimate_fill(self, side: Side, quantity: int, agent_id: str, limit: Optional[int] = None) -> Tuple[int, int]:
+    def estimate_fill(self, side: Side, quantity: int, agent_id: str, limit: Optional[int] = None) -> tuple[int, int]:
         """Walk the opposite side without mutating it.
 
         Returns ``(fillable_quantity, notional_in_ticks)`` ignoring the agent's own
@@ -186,6 +202,7 @@ class OrderBook:
         return quantity - remaining, notional
 
     def would_cross(self, side: Side, price: int) -> bool:
+        """Whether a limit at ``price`` would trade immediately (the post-only test)."""
         best_opposite = self.best(side.opposite)
         if best_opposite is None:
             return False
@@ -218,6 +235,7 @@ class OrderBook:
         self._orders[order.order_id] = order
 
     def cancel(self, order_id: str) -> Optional[RestingOrder]:
+        """Remove an order; returns it, or ``None`` if unknown."""
         order = self._orders.pop(order_id, None)
         if order is None:
             return None
@@ -238,8 +256,8 @@ class OrderBook:
         Resting orders owned by ``agent_id`` are canceled, never traded against.
         """
         remaining = quantity
-        matches: List[Match] = []
-        stp: List[RestingOrder] = []
+        matches: list[Match] = []
+        stp: list[RestingOrder] = []
         opposite = side.opposite
         book = self._levels[opposite]
         prices = self._prices[opposite]

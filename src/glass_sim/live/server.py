@@ -29,12 +29,14 @@ STATIC_ROOT = Path(__file__).resolve().parent / "static"
 
 
 def _json_default(value: Any) -> Any:
+    """JSON fallback: NaN and infinities become ``null``, anything else its string."""
     if value != value or value in (float("inf"), float("-inf")):  # NaN / inf
         return None
     return str(value)
 
 
 def _clean(value: Any) -> Any:
+    """Replace NaN and infinities deep inside a payload, which JSON cannot carry."""
     if isinstance(value, float):
         if value != value or value in (float("inf"), float("-inf")):
             return None
@@ -51,9 +53,11 @@ class _Handler(BaseHTTPRequestHandler):
 
     @property
     def session(self) -> LiveSession:
+        """The session attached to the server."""
         return self.server.session  # type: ignore[attr-defined]
 
     def _send_json(self, payload: Any, status: int = HTTPStatus.OK) -> None:
+        """Write a JSON response with no-cache headers."""
         body = json.dumps(_clean(payload), default=_json_default, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -63,6 +67,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_static(self, name: str) -> None:
+        """Serve a file from the bundled web app; paths outside it are refused."""
         path = (STATIC_ROOT / name).resolve()
         if STATIC_ROOT not in path.parents or not path.is_file():
             self.send_error(HTTPStatus.NOT_FOUND)
@@ -77,6 +82,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self) -> None:  # noqa: N802
+        """Route the page, static files and the read-only API."""
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
         if parsed.path in ("/", "/index.html"):
@@ -89,11 +95,12 @@ class _Handler(BaseHTTPRequestHandler):
             except KeyError:
                 self._send_json({"error": "unknown account"}, HTTPStatus.NOT_FOUND)
         elif parsed.path.startswith("/static/"):
-            self._serve_static(parsed.path[len("/static/"):])
+            self._serve_static(parsed.path[len("/static/") :])
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:  # noqa: N802
+        """The control endpoint."""
         if urlparse(self.path).path != "/api/control":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -107,6 +114,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True})
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        """Silence per-request logging; the viewer polls several times a second."""
         return
 
 
@@ -126,10 +134,12 @@ class FuturesViewer:
 
     @property
     def url(self) -> str:
+        """Address of the running server."""
         host, port = self.httpd.server_address[:2]
         return f"http://{host}:{port}"
 
     def start(self, open_browser: bool = False) -> None:
+        """Serve in a background thread (used by tests and embedding)."""
         self.session.start()
         self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self._thread.start()
@@ -137,6 +147,7 @@ class FuturesViewer:
             webbrowser.open(self.url)
 
     def serve_forever(self, open_browser: bool = False) -> None:
+        """Serve in the calling thread until interrupted."""
         self.session.start()
         if open_browser:
             webbrowser.open(self.url)
@@ -146,6 +157,7 @@ class FuturesViewer:
             self.stop()
 
     def stop(self) -> None:
+        """Stop the session and the server."""
         self.session.stop()
         self.httpd.shutdown()
         self.httpd.server_close()

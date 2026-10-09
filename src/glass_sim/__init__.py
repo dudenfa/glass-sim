@@ -9,7 +9,7 @@ Quick start::
 
 Write your own agent by subclassing ``Agent`` and returning actions
 (``LimitOrder``, ``MarketOrder``, ``Cancel``, ``CancelAll``) from ``on_wakeup``;
-add it to a scenario with an ``AgentSpec``. See ``docs/glass/README.md``.
+add it to a scenario with an ``AgentSpec``. See ``docs/user-guide.md``.
 """
 
 from . import scenarios
@@ -28,10 +28,10 @@ from .agents import (
     Whale,
 )
 from .config import (
+    HOUR,
     AgentSpec,
     ContractSpec,
     FundingConfig,
-    HOUR,
     IndexConfig,
     LatencyConfig,
     LiquidationConfig,

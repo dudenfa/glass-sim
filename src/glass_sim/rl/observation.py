@@ -32,8 +32,9 @@ hash. "Who" is described by what anyone can observe about that account.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
+from typing import Optional
 
 import numpy as np
 
@@ -44,12 +45,14 @@ CLIP = 5.0
 
 
 def _ret_bps(series: Sequence[float], lag: int) -> float:
+    """Return over ``lag`` samples in bps (0 when history is missing)."""
     if len(series) <= lag or not series[-1] or not series[-1 - lag]:
         return 0.0
     return (series[-1] / series[-1 - lag] - 1.0) * 1e4
 
 
 def _vol_bps(series: Sequence[float]) -> float:
+    """Standard deviation of per-sample log returns in bps."""
     clean = [p for p in series if p]
     if len(clean) < 5:
         return 0.0
@@ -59,6 +62,8 @@ def _vol_bps(series: Sequence[float]) -> float:
 
 @dataclass(frozen=True)
 class ObservationConfig:
+    """Which optional blocks are included and their windows; changing it changes the vector size."""
+
     include_transparency: bool = True
     include_signal: bool = False
     flow_window: float = 600.0
@@ -134,6 +139,8 @@ ACCOUNT_FIELDS = [
 
 
 class ObservationEncoder:
+    """Turns a ``MarketView`` into the feature vector described in the module docstring."""
+
     def __init__(self, config: Optional[ObservationConfig] = None) -> None:
         self.config = config or ObservationConfig()
         names = MARKET_FEATURES + ACCOUNT_FEATURES
@@ -145,15 +152,17 @@ class ObservationEncoder:
             names = names + [f"trade{i:02d}_{field}" for field in TRADE_FIELDS]
         for k in range(self.config.accounts_table):
             names = names + [f"account{k:02d}_{field}" for field in ACCOUNT_FIELDS]
-        self.feature_names: List[str] = names
+        self.feature_names: list[str] = names
 
     @property
     def size(self) -> int:
+        """Length of the feature vector."""
         return len(self.feature_names)
 
     # ----------------------------------------------------------------- blocks
 
-    def _market(self, view: MarketView) -> List[float]:
+    def _market(self, view: MarketView) -> list[float]:
+        """Always-visible market features."""
         index = view.index_price
         mark = view.mark_price
         mid = view.mid if view.mid is not None else view.last_price
@@ -194,7 +203,8 @@ class ObservationEncoder:
             news_jump / 50.0,
         ]
 
-    def _account(self, view: MarketView) -> List[float]:
+    def _account(self, view: MarketView) -> list[float]:
+        """The agent's own account features."""
         me = view.me
         mark = view.mark_price
         equity = max(me.equity, 1e-9)
@@ -215,7 +225,8 @@ class ObservationEncoder:
             1.0 if any(o.side is Side.SELL for o in orders) else 0.0,
         ]
 
-    def _transparency(self, view: MarketView) -> List[float]:
+    def _transparency(self, view: MarketView) -> list[float]:
+        """Summaries of what the transparency level reveals about others; zeros when hidden."""
         sees_owners = view.can_see(Transparency.ATTRIBUTED)
         sees_positions = view.can_see(Transparency.FULL)
         crowd = high_lev = liq_below = liq_above = largest = 0.0
@@ -254,7 +265,8 @@ class ObservationEncoder:
                 flow_signal = strongest / depth
         return [1.0 if sees_owners else 0.0, 1.0 if sees_positions else 0.0, crowd, high_lev, liq_below, liq_above, largest, flow_signal]
 
-    def _signal(self, view: MarketView) -> List[float]:
+    def _signal(self, view: MarketView) -> list[float]:
+        """The nearest pending private signal, or zeros."""
         pending = [s for s in view.signals() if s.public_time > view.time]
         if not pending:
             return [0.0, 0.0]
@@ -262,6 +274,7 @@ class ObservationEncoder:
         return [signal.expected_log_jump * 1e4 / 50.0, (signal.public_time - view.time) / 90.0]
 
     def _flows(self, view: MarketView) -> dict:
+        """Net contracts bought per public id over the flow window (ATTRIBUTED and up)."""
         flows: dict = {}
         if not view.can_see(Transparency.ATTRIBUTED):
             return flows
@@ -273,7 +286,8 @@ class ObservationEncoder:
             flows[trade.seller] = flows.get(trade.seller, 0) - trade.quantity
         return flows
 
-    def _tables(self, view: MarketView) -> List[float]:
+    def _tables(self, view: MarketView) -> list[float]:
+        """Raw rows of recent trades and largest accounts, each field gated by transparency."""
         n_trades, n_accounts = self.config.trades_table, self.config.accounts_table
         attributed = view.can_see(Transparency.ATTRIBUTED)
         full = view.can_see(Transparency.FULL)
@@ -285,9 +299,10 @@ class ObservationEncoder:
         accounts = {a.public_id: a for a in view.accounts(include_self=True)} if full else {}
 
         def flow_of(owner) -> float:
+            """Recent net flow of ``owner`` relative to book depth."""
             return flows.get(owner, 0) / depth if owner is not None else 0.0
 
-        values: List[float] = []
+        values: list[float] = []
         trades = view.recent_trades(n_trades) if n_trades else []
         trades = list(reversed(trades))  # most recent first
         for i in range(n_trades):
@@ -297,7 +312,7 @@ class ObservationEncoder:
             t = trades[i]
             buyer = accounts.get(t.buyer) if full else None
             seller = accounts.get(t.seller) if full else None
-            signed_lev = lambda a: (0.0 if a is None or a.position == 0 else (1 if a.position > 0 else -1) * min(a.leverage, 50.0) / 10.0)
+            signed_lev = lambda a: 0.0 if a is None or a.position == 0 else (1 if a.position > 0 else -1) * min(a.leverage, 50.0) / 10.0
             values.extend(
                 [
                     (t.price - mark) / mark * 1e4 / 10.0,
@@ -346,6 +361,7 @@ class ObservationEncoder:
     # ------------------------------------------------------------------ main
 
     def encode(self, view: MarketView) -> np.ndarray:
+        """The feature vector for ``view``, cleaned of NaN/inf and clipped."""
         values = self._market(view) + self._account(view)
         if self.config.include_transparency:
             values += self._transparency(view)

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 
@@ -42,13 +42,16 @@ class IndexProcess:
 
     @property
     def price(self) -> float:
+        """Current index price."""
         return math.exp(self.log_price)
 
     @property
     def current_sigma_per_second(self) -> float:
+        """Instantaneous volatility per second."""
         return self.base_sigma * math.exp(self.log_vol_multiplier)
 
     def advance(self, dt: float) -> float:
+        """Advance the diffusion by ``dt`` seconds and return the new price."""
         if not self.config.enabled or dt <= 0:
             return self.price
         kappa = self.config.vol_mean_reversion
@@ -62,6 +65,7 @@ class IndexProcess:
         return self.price
 
     def jump(self, log_jump: float) -> float:
+        """Apply a news jump; volatility rises with it so the index is choppier after news, as in real markets."""
         self.log_price += log_jump
         # A shock also raises volatility for a while, like real markets after news.
         self.log_vol_multiplier = min(2.0, self.log_vol_multiplier + 4.0 * abs(log_jump) / max(self.config.daily_volatility, 1e-9))
@@ -70,6 +74,8 @@ class IndexProcess:
 
 @dataclass(frozen=True)
 class NewsItem:
+    """A public news event: a log jump applied to the index at ``time``."""
+
     news_id: int
     time: float
     headline: str
@@ -86,10 +92,11 @@ class PrivateSignal:
     expected_log_jump: float
 
 
-def generate_news(config: NewsConfig, duration: float, rng: np.random.Generator) -> List[NewsItem]:
+def generate_news(config: NewsConfig, duration: float, rng: np.random.Generator) -> list[NewsItem]:
+    """Poisson news arrivals for the whole session, drawn up front from the news stream so agents cannot perturb them."""
     if not config.enabled or config.rate_per_hour <= 0:
         return []
-    items: List[NewsItem] = []
+    items: list[NewsItem] = []
     t = 0.0
     rate = config.rate_per_hour / 3600.0
     news_id = 0
@@ -103,10 +110,10 @@ def generate_news(config: NewsConfig, duration: float, rng: np.random.Generator)
     return items
 
 
-def generate_signals(config: NewsConfig, news: List[NewsItem], rng: np.random.Generator) -> List[PrivateSignal]:
+def generate_signals(config: NewsConfig, news: list[NewsItem], rng: np.random.Generator) -> list[PrivateSignal]:
     """One private signal per news item, shared by all subscribed agents."""
     low, high = config.lead_time
-    signals: List[PrivateSignal] = []
+    signals: list[PrivateSignal] = []
     for item in news:
         lead = float(rng.uniform(low, high))
         noise = float(rng.normal(0.0, config.signal_noise * config.jump_std))
@@ -122,6 +129,7 @@ def generate_signals(config: NewsConfig, news: List[NewsItem], rng: np.random.Ge
 
 
 def sample_collateral(spec, rng: np.random.Generator) -> float:
+    """A fixed amount, or log-uniform in a ``(low, high)`` range so small and large accounts are equally represented."""
     if isinstance(spec, (tuple, list)):
         low, high = float(spec[0]), float(spec[1])
         return float(math.exp(rng.uniform(math.log(low), math.log(high))))
@@ -129,4 +137,5 @@ def sample_collateral(spec, rng: np.random.Generator) -> float:
 
 
 def optional_float(value) -> Optional[float]:
+    """``float(value)`` or ``None``."""
     return None if value is None else float(value)

@@ -33,9 +33,10 @@ import heapq
 import math
 import zlib
 from collections import deque
+from collections.abc import Callable, Iterable, Sequence
 from itertools import count
 from statistics import median
-from typing import Callable, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
@@ -62,6 +63,9 @@ from .types import (
 )
 from .views import AccountView, MarketView, PublicAccount
 
+if TYPE_CHECKING:  # pragma: no cover
+    from .results import SimulationResult
+
 # Event priorities for equal timestamps (lower runs first).
 _P_NEWS = 0
 _P_INDEX = 1
@@ -82,7 +86,15 @@ def _stable_hash(text: str) -> int:
 
 
 class PerpetualMarket:
-    def __init__(self, config: MarketConfig, agents: Optional[Sequence[Tuple[Agent, float]]] = None, *, keep_order_events: bool = False) -> None:
+    """The exchange, the clock and the participants of one simulated session.
+
+    Agents never touch this object: they observe through a ``MarketView`` and
+    their actions travel through the event queue, so a seed always replays the
+    same session. Researchers use the direct controls (``execute``,
+    ``shock_index``, ``run_until``) for interventions.
+    """
+
+    def __init__(self, config: MarketConfig, agents: Optional[Sequence[tuple[Agent, float]]] = None, *, keep_order_events: bool = False) -> None:
         """Create a market.
 
         ``agents`` optionally overrides ``config.agents`` with already-built
@@ -110,46 +122,47 @@ class PerpetualMarket:
 
         self.time = 0.0
         self.book = OrderBook()
-        self.accounts: Dict[str, MarginAccount] = {}
-        self.agents: Dict[str, Agent] = {}
-        self._agent_rngs: Dict[str, np.random.Generator] = {}
-        self._latency_rngs: Dict[str, np.random.Generator] = {}
+        self.accounts: dict[str, MarginAccount] = {}
+        self.agents: dict[str, Agent] = {}
+        self._agent_rngs: dict[str, np.random.Generator] = {}
+        self._latency_rngs: dict[str, np.random.Generator] = {}
         self._signal_subscribers: set = set()
         self._external_ids: set = set()
-        self._public_ids: Dict[str, str] = {}
-        self._views: Dict[str, MarketView] = {}
+        self._public_ids: dict[str, str] = {}
+        self._views: dict[str, MarketView] = {}
 
         self.index = IndexProcess(config.index, config.contract.initial_price, self._index_rng)
         self.index_price = self.index.price
-        self.news_items: List[NewsItem] = generate_news(config.news, config.duration, np.random.default_rng(exo_news))
-        self.signals: List[PrivateSignal] = generate_signals(config.news, self.news_items, np.random.default_rng(exo_signals))
-        self.public_news: List[NewsItem] = []
+        self.news_items: list[NewsItem] = generate_news(config.news, config.duration, np.random.default_rng(exo_news))
+        self.signals: list[PrivateSignal] = generate_signals(config.news, self.news_items, np.random.default_rng(exo_signals))
+        self.public_news: list[NewsItem] = []
         self._released_news: set = set()
-        self._delivered_signals: List[PrivateSignal] = []
+        self._delivered_signals: list[PrivateSignal] = []
 
         self.last_price = float(config.contract.initial_price)
         self.mark_price = float(config.contract.initial_price)
         self._basis_ema = 0.0
         self.last_funding_rate = 0.0
         self.next_funding_time = config.funding.interval
-        self._premium_samples: List[float] = []
+        self._premium_samples: list[float] = []
 
         self.insurance_fund = float(config.liquidation.insurance_fund)
         self.fees_collected = 0.0
         self.total_deposits = 0.0
 
         self.recorder = Recorder(keep_order_events=self.keep_order_events)
-        self.recent_trades: Deque[TradeRecord] = deque(maxlen=config.recent_trades_kept)
+        self.recent_trades: deque[TradeRecord] = deque(maxlen=config.recent_trades_kept)
         self._trade_ids = count(1)
         self._order_ids = count(1)
         self._event_seq = count(1)
-        self._queue: List[_Event] = []
+        # Heap of (time, priority, sequence, kind, payload) tuples; see _push().
+        self._queue: list[tuple] = []
 
-        self._bar: Dict[str, float] = {}
+        self._bar: dict[str, float] = {}
         self._reset_bar()
-        self._price_samples: Deque[float] = deque(maxlen=3600)
-        self._mark_samples: Deque[float] = deque(maxlen=3600)
-        self._index_samples: Deque[float] = deque(maxlen=3600)
+        self._price_samples: deque[float] = deque(maxlen=3600)
+        self._mark_samples: deque[float] = deque(maxlen=3600)
+        self._index_samples: deque[float] = deque(maxlen=3600)
         self._record_index = 0
 
         self._pending_decision: Optional[str] = None
@@ -165,7 +178,8 @@ class PerpetualMarket:
             self._build_agents_from_specs(config.agents)
 
     def _build_agents_from_specs(self, specs: Iterable[AgentSpec]) -> None:
-        used_prefix_counts: Dict[str, int] = {}
+        """Instantiate ``AgentSpec`` groups, sampling randomized parameters and collateral from the setup stream."""
+        used_prefix_counts: dict[str, int] = {}
         for spec in specs:
             prefix = spec.prefix or getattr(spec.agent, "default_prefix", "agent")
             for _ in range(spec.count):
@@ -214,23 +228,32 @@ class PerpetualMarket:
             self._external_ids.add(agent_id)
 
     def _make_public_id(self, agent_id: str) -> str:
+        """Wallet-like hash per seed, so agents cannot infer a type from a name like ``whale_01``."""
         if not self.config.pseudonymous_ids:
             return agent_id
         digest = hashlib.sha256(f"{self.seed}:{agent_id}".encode()).hexdigest()
         return f"0x{digest[:4]}…{digest[-4:]}"
 
     def public_id(self, agent_id: str) -> str:
+        """The id other agents see for ``agent_id`` (hashed when ``pseudonymous_ids`` is on)."""
         return self._public_ids.get(agent_id, agent_id)
 
     def view(self, agent_id: str) -> MarketView:
+        """The ``MarketView`` through which ``agent_id`` observes the market."""
         return self._views[agent_id]
 
     # ============================================================ scheduling
 
     def _push(self, time: float, priority: int, kind: str, payload: object = None) -> None:
+        """Queue an event; the sequence number breaks ties so equal timestamps replay in insertion order."""
         heapq.heappush(self._queue, (time, priority, next(self._event_seq), kind, payload))
 
     def _start(self) -> None:
+        """Schedule the exogenous processes, the first wakeups and the end of the session.
+
+        Runs lazily on the first ``step()`` so agents can still be added after
+        construction.
+        """
         if self._started:
             return
         self._started = True
@@ -255,6 +278,11 @@ class PerpetualMarket:
             self._push(self.time + agent.next_wakeup_delay(rng), _P_WAKEUP, "wakeup", agent_id)
 
     def _send(self, agent_id: str, actions: Optional[Sequence[Action]]) -> None:
+        """Queue ``actions`` to reach the exchange after the agent's latency.
+
+        Latency is what lets the market move between a decision and its
+        execution; without it every agent would trade on a perfectly fresh book.
+        """
         batch = actions_list(actions)
         if not batch:
             return
@@ -268,10 +296,12 @@ class PerpetualMarket:
 
     @property
     def finished(self) -> bool:
+        """True once the end-of-session event has run."""
         return self._finished
 
     @property
     def pending_decision(self) -> Optional[str]:
+        """Id of the external agent waiting for ``act()``, or ``None``."""
         return self._pending_decision
 
     def step(self) -> Optional[str]:
@@ -297,7 +327,7 @@ class PerpetualMarket:
         if not self._finished and self._pending_decision is None:
             self.time = max(self.time, min(time, self.config.duration))
 
-    def run(self, progress: Optional[Callable[[float], None]] = None) -> "SimulationResult":
+    def run(self, progress: Optional[Callable[[float], None]] = None) -> SimulationResult:
         """Run to the end and return the results."""
         from .results import SimulationResult
 
@@ -305,9 +335,7 @@ class PerpetualMarket:
         next_report = 0.0
         while not self._finished:
             if self._pending_decision is not None:
-                raise RuntimeError(
-                    f"agent {self._pending_decision} is external without a policy; drive it with run_until_decision()/act()"
-                )
+                raise RuntimeError(f"agent {self._pending_decision} is external without a policy; drive it with run_until_decision()/act()")
             self.step()
             if progress is not None and self.time >= next_report:
                 progress(self.time)
@@ -346,7 +374,8 @@ class PerpetualMarket:
         self.recorder.news.append(NewsRecord(time=self.time, headline=headline, log_jump=log_jump))
         self._after_market_change()
 
-    def results(self) -> "SimulationResult":
+    def results(self) -> SimulationResult:
+        """Snapshot of the session so far (valid before the end as well)."""
         from .results import SimulationResult
 
         return SimulationResult.from_market(self)
@@ -354,12 +383,14 @@ class PerpetualMarket:
     # ======================================================== event handlers
 
     def _on_index(self, _payload) -> None:
+        """Advance the index diffusion by one update interval."""
         interval = self.config.index.update_interval
         self.index_price = self.index.advance(interval)
         self._push(self.time + interval, _P_INDEX, "index")
         self._after_market_change()
 
     def _on_news(self, item: NewsItem) -> None:
+        """Apply the jump to the index, publish the item and let active internal agents react."""
         self.index_price = self.index.jump(item.log_jump)
         self.public_news.append(item)
         self._released_news.add(item.news_id)
@@ -371,6 +402,7 @@ class PerpetualMarket:
             self._send(agent_id, agent.on_news(item, self._views[agent_id], self._agent_rngs[agent_id]))
 
     def _on_signal(self, signal: PrivateSignal) -> None:
+        """Deliver a private signal to its subscribers while the news is still unpublished."""
         self._delivered_signals.append(signal)
         for agent_id in sorted(self._signal_subscribers):
             if agent_id in self._external_ids or not self.accounts[agent_id].active:
@@ -379,6 +411,11 @@ class PerpetualMarket:
             self._send(agent_id, agent.on_signal(signal, self._views[agent_id], self._agent_rngs[agent_id]))
 
     def _on_wakeup(self, agent_id: str) -> None:
+        """An agent's decision point.
+
+        External agents pause the market here until ``act()`` answers; internal
+        agents answer at once and draw their next wakeup from their own stream.
+        """
         account = self.accounts[agent_id]
         if not account.active:
             return
@@ -391,17 +428,24 @@ class PerpetualMarket:
         self._push(self.time + agent.next_wakeup_delay(rng), _P_WAKEUP, "wakeup", agent_id)
 
     def _on_arrival(self, payload) -> None:
+        """Execute a batch of actions that has reached the exchange."""
         agent_id, actions = payload
         for action in actions:
             self._process_action(agent_id, action)
         self._after_market_change()
 
     def _on_funding_sample(self, _payload) -> None:
+        """Sample the premium; the settlement uses the mean of the samples."""
         if self.index_price > 0:
             self._premium_samples.append((self.mark_price - self.index_price) / self.index_price)
         self._push(self.time + self.config.funding.sample_interval, _P_FUNDING, "funding_sample")
 
     def _on_funding(self, _payload) -> None:
+        """Settle funding from the sampled premium.
+
+        Payments move collateral, so an account can end up under water here
+        without any trade: hence the liquidation check at the end.
+        """
         cfg = self.config.funding
         premium = float(np.mean(self._premium_samples)) if self._premium_samples else 0.0
         rate = max(-cfg.cap, min(cfg.cap, premium + cfg.interest_rate))
@@ -417,32 +461,39 @@ class PerpetualMarket:
                 paid_by_longs += payment
         self.last_funding_rate = rate
         self.recorder.funding.append(
-            FundingRecord(time=self.time, rate=rate, premium=premium, mark_price=self.mark_price, index_price=self.index_price, total_paid_by_longs=paid_by_longs)
+            FundingRecord(
+                time=self.time, rate=rate, premium=premium, mark_price=self.mark_price, index_price=self.index_price, total_paid_by_longs=paid_by_longs
+            )
         )
         self.next_funding_time = self.time + cfg.interval
         self._push(self.next_funding_time, _P_FUNDING, "funding")
         self._run_liquidations()
 
     def _on_record(self, _payload) -> None:
+        """Close the current bar and sample account paths."""
         self._update_basis_ema()
         self._record_bar()
         self._push(self.time + self.config.record_interval, _P_RECORD, "record")
 
     def _on_end(self, _payload) -> None:
+        """Stop the session; anything still queued is discarded."""
         self._finished = True
         self._queue.clear()
 
     # ============================================================= prices
 
     def best_bid_price(self) -> Optional[float]:
+        """Best bid in price units (``None`` when the bid side is empty)."""
         bid = self.book.best_bid()
         return None if bid is None else bid * self.tick_size
 
     def best_ask_price(self) -> Optional[float]:
+        """Best ask in price units (``None`` when the ask side is empty)."""
         ask = self.book.best_ask()
         return None if ask is None else ask * self.tick_size
 
     def mid_price(self) -> Optional[float]:
+        """Book mid in price units (``None`` when a side is empty)."""
         mid = self.book.mid()
         return None if mid is None else mid * self.tick_size
 
@@ -450,6 +501,7 @@ class PerpetualMarket:
         return max(1, int(round(price / self.tick_size)))
 
     def _update_basis_ema(self) -> None:
+        """Track the perp-index basis slowly so the mark anchor follows a persistent premium but ignores a single swing."""
         mid = self.mid_price()
         if mid is None:
             return
@@ -457,42 +509,53 @@ class PerpetualMarket:
         self._basis_ema += alpha * ((mid - self.index_price) - self._basis_ema)
 
     def _compute_mark(self) -> float:
+        """Median of three price sources, so no single one (a thin book, a stale trade, a slow index) can drag the mark alone."""
         anchored = self.index_price + self._basis_ema
         mid = self.mid_price()
         candidates = [anchored, self.last_price, mid if mid is not None else self.index_price]
         return float(median(candidates))
 
     def _after_market_change(self) -> None:
+        """Refresh the mark and liquidate whoever it puts under water; called after every event that can move prices."""
         self.mark_price = self._compute_mark()
         self._run_liquidations()
 
     def predicted_funding_rate(self) -> float:
+        """The rate the next settlement would apply if the premium stayed where it is."""
         cfg = self.config.funding
         premium = float(np.mean(self._premium_samples)) if self._premium_samples else 0.0
         return max(-cfg.cap, min(cfg.cap, premium + cfg.interest_rate))
 
     def open_interest(self) -> int:
+        """Total long contracts (equal to total short contracts by construction)."""
         return sum(account.position for account in self.accounts.values() if account.position > 0)
 
-    def recent_prices(self, seconds: int) -> List[float]:
+    def recent_prices(self, seconds: int) -> list[float]:
+        """Last ``seconds`` of per-interval trade prices, oldest first."""
         n = max(1, int(seconds / self.config.record_interval))
         return list(self._price_samples)[-n:]
 
-    def recent_marks(self, seconds: int) -> List[float]:
+    def recent_marks(self, seconds: int) -> list[float]:
+        """Last ``seconds`` of per-interval mark prices, oldest first."""
         n = max(1, int(seconds / self.config.record_interval))
         return list(self._mark_samples)[-n:]
 
-    def recent_open_interest(self, seconds: int) -> List[float]:
+    def recent_open_interest(self, seconds: int) -> list[float]:
+        """Last ``seconds`` of per-interval open interest, oldest first."""
         n = max(1, int(seconds / self.config.record_interval))
         return list(self.recorder.bars["open_interest"][-n:])
 
-    def recent_index(self, seconds: int) -> List[float]:
+    def recent_index(self, seconds: int) -> list[float]:
+        """Last ``seconds`` of per-interval index prices, oldest first."""
         n = max(1, int(seconds / self.config.record_interval))
         return list(self._index_samples)[-n:]
 
     # ============================================================ orders
 
-    def _order_event(self, kind: str, order_id: str, agent_id: str, side: Side, order_type: str, quantity: int, price: Optional[float], reason: str = "") -> None:
+    def _order_event(
+        self, kind: str, order_id: str, agent_id: str, side: Side, order_type: str, quantity: int, price: Optional[float], reason: str = ""
+    ) -> None:
+        """Record an order lifecycle event and keep the per-account counters in sync."""
         account = self.accounts[agent_id]
         if kind == "accepted":
             account.orders_accepted += 1
@@ -501,7 +564,9 @@ class PerpetualMarket:
         elif kind == "canceled":
             account.orders_canceled += 1
         self.recorder.add_order_event(
-            OrderEvent(time=self.time, kind=kind, order_id=order_id, agent_id=agent_id, side=side, order_type=order_type, quantity=quantity, price=price, reason=reason)
+            OrderEvent(
+                time=self.time, kind=kind, order_id=order_id, agent_id=agent_id, side=side, order_type=order_type, quantity=quantity, price=price, reason=reason
+            )
         )
 
     def _new_order_id(self, agent_id: str) -> str:
@@ -523,12 +588,14 @@ class PerpetualMarket:
         return account.equity(mark) - fee >= required
 
     def _reduce_only_cap(self, account: MarginAccount, side: Side, quantity: int) -> int:
+        """How much of a reduce-only order can actually reduce the position (0 when it would add to it)."""
         pos = account.position
         if pos == 0 or (pos > 0) == (side is Side.BUY):
             return 0
         return min(quantity, abs(pos))
 
     def _process_action(self, agent_id: str, action: Action) -> None:
+        """Dispatch one action; cancels are honoured even for deactivated accounts so nothing stays stuck in the book."""
         account = self.accounts[agent_id]
         if isinstance(action, Cancel):
             self._cancel(agent_id, action.order_id, "user")
@@ -548,6 +615,7 @@ class PerpetualMarket:
             raise TypeError(f"unknown action {action!r}")
 
     def _limit(self, agent_id: str, account: MarginAccount, action: LimitOrder) -> None:
+        """Validate, match and rest a limit order. Post-only is checked before margin because a crossing post-only order is simply rejected."""
         order_id = self._new_order_id(agent_id)
         price_ticks = self._to_ticks(action.price)
         price = price_ticks * self.tick_size
@@ -576,6 +644,7 @@ class PerpetualMarket:
                 account.reserve_order(action.side, remaining)
 
     def _market(self, agent_id: str, account: MarginAccount, action: MarketOrder) -> None:
+        """Execute a market order as an aggressive limit a few percent from the mark, so a thin book cannot be swept to absurd prices."""
         order_id = self._new_order_id(agent_id)
         quantity = int(action.quantity)
         if action.reduce_only:
@@ -601,6 +670,7 @@ class PerpetualMarket:
             self._order_event("expired", order_id, agent_id, action.side, "market", quantity - result.filled, None, "insufficient_liquidity")
 
     def _cancel(self, agent_id: str, order_id: str, reason: str) -> bool:
+        """Cancel one order if it belongs to ``agent_id``; returns whether anything was canceled."""
         order = self.book.get(order_id)
         if order is None or order.agent_id != agent_id:
             return False
@@ -614,9 +684,19 @@ class PerpetualMarket:
             self._cancel(agent_id, order.order_id, reason)
 
     def _apply_match(self, taker_id: str, taker_order_id: str, taker_side: Side, result: MatchResult, *, liquidation: bool = False) -> None:
+        """Settle every fill of a match: fees, both accounts, the trade record and the agents' ``on_fill`` hooks."""
         for canceled in result.self_trade_canceled:
             self.accounts[canceled.agent_id].reduce_reservation(canceled.side, canceled.remaining, closes_order=True)
-            self._order_event("canceled", canceled.order_id, canceled.agent_id, canceled.side, "limit", canceled.remaining, canceled.price * self.tick_size, "self_trade_prevention")
+            self._order_event(
+                "canceled",
+                canceled.order_id,
+                canceled.agent_id,
+                canceled.side,
+                "limit",
+                canceled.remaining,
+                canceled.price * self.tick_size,
+                "self_trade_prevention",
+            )
         cs = self.contract.contract_size
         taker = self.accounts[taker_id]
         for match in result.matches:
@@ -645,10 +725,14 @@ class PerpetualMarket:
                 liquidation=liquidation,
             )
             self._record_trade(trade)
-            self._notify_fill(maker_order.agent_id, Fill(self.time, maker_order.order_id, maker_order.agent_id, maker_order.side, price, qty, maker_fee, True, maker_realized, liquidation))
+            self._notify_fill(
+                maker_order.agent_id,
+                Fill(self.time, maker_order.order_id, maker_order.agent_id, maker_order.side, price, qty, maker_fee, True, maker_realized, liquidation),
+            )
             self._notify_fill(taker_id, Fill(self.time, taker_order_id, taker_id, taker_side, price, qty, taker_fee, False, taker_realized, liquidation))
 
     def _record_trade(self, trade: TradeRecord) -> None:
+        """Append the trade to the tape and fold it into the current bar."""
         self.recorder.trades.append(trade)
         self.recent_trades.append(trade)
         bar = self._bar
@@ -664,6 +748,7 @@ class PerpetualMarket:
         bar["trades"] += 1
 
     def _notify_fill(self, agent_id: str, fill: Fill) -> None:
+        """Tell the owner about a fill (bookkeeping only; agents cannot act from this hook)."""
         agent = self.agents.get(agent_id)
         if agent is not None:
             agent.on_fill(fill, self._views[agent_id])
@@ -671,15 +756,18 @@ class PerpetualMarket:
     # ======================================================= liquidations
 
     def _run_liquidations(self) -> None:
+        """Liquidate every under-water account, worst first, until none is left.
+
+        The loop is bounded by the number of accounts: every pass closes at
+        least one position, so even a full cascade terminates.
+        """
         if not self.config.liquidation.enabled:
             return
         # Liquidation fills move the mark, which can trigger further liquidations (a cascade).
         for _ in range(len(self.accounts) + 1):
             mark = self.mark_price
             underwater = [
-                account
-                for account in self.accounts.values()
-                if account.position != 0 and account.equity(mark) < account.maintenance_margin(mark, self._mmr)
+                account for account in self.accounts.values() if account.position != 0 and account.equity(mark) < account.maintenance_margin(mark, self._mmr)
             ]
             if not underwater:
                 return
@@ -689,6 +777,11 @@ class PerpetualMarket:
             self.mark_price = self._compute_mark()
 
     def _liquidate(self, account: MarginAccount) -> None:
+        """Force-close one account: cancel, sell into the book, auto-deleverage the rest, charge the penalty, settle bad debt.
+
+        Equity and path statistics are captured first so the record shows what
+        the account looked like at the moment it failed.
+        """
         cfg = self.config.liquidation
         mark = self.mark_price
         agent_id = account.agent_id
@@ -754,13 +847,10 @@ class PerpetualMarket:
         usual exchange ADL priority: the most profitable, most levered go first.
         """
         liquidated_long = account.position > 0
-        candidates = [
-            other
-            for other in self.accounts.values()
-            if other is not account and other.position != 0 and (other.position < 0) == liquidated_long
-        ]
+        candidates = [other for other in self.accounts.values() if other is not account and other.position != 0 and (other.position < 0) == liquidated_long]
 
         def priority(other: MarginAccount) -> float:
+            """ADL rank: unrealized-PnL ratio times leverage; bankrupt accounts go last."""
             equity = other.equity(mark)
             if equity <= 0:
                 return -math.inf
@@ -797,6 +887,7 @@ class PerpetualMarket:
         self._bar = {"open": None, "high": None, "low": None, "close": None, "volume": 0, "trades": 0}
 
     def _record_bar(self, initial: bool = False) -> None:
+        """Write one bar from the trades since the last record, plus the book and risk state at this instant."""
         bar = self._bar
         close = bar["close"] if bar["close"] is not None else self.last_price
         bid, ask = self.best_bid_price(), self.best_ask_price()
@@ -840,12 +931,14 @@ class PerpetualMarket:
 
     # ========================================================= state access
 
-    def pending_signals(self, agent_id: str) -> List[PrivateSignal]:
+    def pending_signals(self, agent_id: str) -> list[PrivateSignal]:
+        """Signals delivered to ``agent_id`` whose news is still unpublished (empty for non-subscribers)."""
         if agent_id not in self._signal_subscribers:
             return []
         return [s for s in self._delivered_signals if s.news_id not in self._released_news]
 
     def account_view(self, agent_id: str) -> AccountView:
+        """The private picture an agent gets of its own account."""
         account = self.accounts[agent_id]
         mark = self.mark_price
         return AccountView(
@@ -865,7 +958,8 @@ class PerpetualMarket:
             active=account.active,
         )
 
-    def public_accounts(self, exclude: Optional[str] = None) -> List[PublicAccount]:
+    def public_accounts(self, exclude: Optional[str] = None) -> list[PublicAccount]:
+        """What FULL transparency reveals about every account except ``exclude``."""
         mark = self.mark_price
         out = []
         for agent_id, account in self.accounts.items():
@@ -889,7 +983,8 @@ class PerpetualMarket:
             )
         return out
 
-    def snapshots(self) -> List[AccountSnapshot]:
+    def snapshots(self) -> list[AccountSnapshot]:
+        """Frozen per-account statistics at the current mark, for results and the viewer."""
         mark = self.mark_price
         return [account.snapshot(mark, self._mmr) for account in self.accounts.values()]
 

@@ -1,6 +1,6 @@
 """Drive an agent from outside the simulator: the hook for reinforcement learning.
 
-    PYTHONPATH=src python examples/glass/04_external_agent_loop.py
+    PYTHONPATH=src python examples/04_external_agent_loop.py
 
 An ``ExternalAgent`` without a policy pauses the market every time it wakes
 up. ``run_until_decision()`` returns its id; you inspect ``market.view(id)``

@@ -10,27 +10,44 @@ from __future__ import annotations
 import threading
 import time as wallclock
 from dataclasses import asdict, replace
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
+from .. import scenarios
 from ..analysis import market_summary, stylized_facts
 from ..config import MarketConfig, format_time
 from ..market import PerpetualMarket
 from ..types import Side, Transparency
-from .. import scenarios
 
 
 def _r(value: Optional[float], digits: int = 4) -> Optional[float]:
+    """Round for JSON; ``None`` passes through."""
     return None if value is None else round(float(value), digits)
 
 
 class LiveSession:
-    def __init__(self, scenario: str = "default", seed: int = 1, transparency: Optional[str] = None, speed: float = 10.0, duration: Optional[float] = None, config: Optional[MarketConfig] = None, rl_checkpoints: Optional[List[str]] = None) -> None:
+    """A market the viewer can play, pause, step and reset.
+
+    Every public method takes the lock so HTTP handlers never read a
+    half-updated market; the background loop releases it often enough
+    (``_advance_to``) that the controls stay responsive.
+    """
+
+    def __init__(
+        self,
+        scenario: str = "default",
+        seed: int = 1,
+        transparency: Optional[str] = None,
+        speed: float = 10.0,
+        duration: Optional[float] = None,
+        config: Optional[MarketConfig] = None,
+        rl_checkpoints: Optional[list[str]] = None,
+    ) -> None:
         self.lock = threading.RLock()
         self.speed = float(speed)
         self.playing = False
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._summary_cache: Dict[str, Any] = {}
+        self._summary_cache: dict[str, Any] = {}
         self._summary_time = -1.0
         self._custom_config = config
         self.rl_checkpoints = list(rl_checkpoints or [])
@@ -41,7 +58,8 @@ class LiveSession:
     # ------------------------------------------------------------- lifecycle
 
     def _build(self, scenario: str, seed: int, transparency: Optional[str]) -> None:
-        overrides: Dict[str, Any] = {"seed": int(seed)}
+        """Create a fresh market (and optional RL participants) for a scenario, seed and transparency level."""
+        overrides: dict[str, Any] = {"seed": int(seed)}
         if self.duration is not None:
             overrides["duration"] = float(self.duration)
         if self._custom_config is not None:
@@ -63,15 +81,18 @@ class LiveSession:
         self._summary_time = -1.0
 
     def start(self) -> None:
+        """Start the background clock."""
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
+        """Stop the background clock and wait for it."""
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
 
     def _loop(self) -> None:
+        """Advance the market in proportion to real elapsed time while playing."""
         tick = 0.05
         last = wallclock.perf_counter()
         while not self._stop.is_set():
@@ -99,7 +120,8 @@ class LiveSession:
 
     # --------------------------------------------------------------- controls
 
-    def control(self, payload: Dict[str, Any]) -> None:
+    def control(self, payload: dict[str, Any]) -> None:
+        """Apply a viewer command: play, pause, step, finish, speed or reset."""
         action = str(payload.get("action", "")).lower()
         with self.lock:
             if action == "play":
@@ -128,13 +150,14 @@ class LiveSession:
 
     # ------------------------------------------------------------------ state
 
-    def _book(self, depth: int = 18) -> Dict[str, List[Dict[str, Any]]]:
+    def _book(self, depth: int = 18) -> dict[str, list[dict[str, Any]]]:
+        """Aggregated book levels with their owners, for the depth panel."""
         market = self.market
         tick = market.tick_size
-        out: Dict[str, List[Dict[str, Any]]] = {}
+        out: dict[str, list[dict[str, Any]]] = {}
         for side, key in ((Side.BUY, "bids"), (Side.SELL, "asks")):
             levels = []
-            orders_by_price: Dict[int, Dict[str, int]] = {}
+            orders_by_price: dict[int, dict[str, int]] = {}
             for order in market.book.orders(side, depth):
                 owners = orders_by_price.setdefault(order.price, {})
                 owners[order.agent_id] = owners.get(order.agent_id, 0) + order.remaining
@@ -151,7 +174,8 @@ class LiveSession:
             out[key] = levels
         return out
 
-    def _trades(self, n: int = 60) -> List[Dict[str, Any]]:
+    def _trades(self, n: int = 60) -> list[dict[str, Any]]:
+        """The recent trade tape with participant types."""
         market = self.market
         rows = []
         for t in list(market.recent_trades)[-n:]:
@@ -172,21 +196,42 @@ class LiveSession:
             )
         return rows
 
-    def _accounts(self) -> List[Dict[str, Any]]:
+    def _accounts(self) -> list[dict[str, Any]]:
+        """Every account's snapshot, rounded for JSON."""
         market = self.market
         rows = []
         for snap in market.snapshots():
             row = asdict(snap)
-            for key in ("collateral", "entry_price", "unrealized_pnl", "realized_pnl", "equity", "notional", "leverage", "fees_paid", "funding_paid", "total_pnl", "return_pct", "volume", "max_drawdown_pct", "max_leverage", "maker_share"):
+            for key in (
+                "collateral",
+                "entry_price",
+                "unrealized_pnl",
+                "realized_pnl",
+                "equity",
+                "notional",
+                "leverage",
+                "fees_paid",
+                "funding_paid",
+                "total_pnl",
+                "return_pct",
+                "volume",
+                "max_drawdown_pct",
+                "max_leverage",
+                "maker_share",
+            ):
                 row[key] = _r(row[key], 4)
             row["liquidation_price"] = _r(row["liquidation_price"], 4)
             rows.append(row)
         return rows
 
-    def _groups(self, accounts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        groups: Dict[str, Dict[str, float]] = {}
+    def _groups(self, accounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Per-type aggregates of the account rows."""
+        groups: dict[str, dict[str, float]] = {}
         for a in accounts:
-            g = groups.setdefault(a["agent_type"], {"agent_type": a["agent_type"], "agents": 0, "active": 0, "initial": 0.0, "pnl": 0.0, "long": 0, "short": 0, "volume": 0.0, "liquidations": 0})
+            g = groups.setdefault(
+                a["agent_type"],
+                {"agent_type": a["agent_type"], "agents": 0, "active": 0, "initial": 0.0, "pnl": 0.0, "long": 0, "short": 0, "volume": 0.0, "liquidations": 0},
+            )
             g["agents"] += 1
             g["active"] += 1 if a["active"] else 0
             g["initial"] += a["initial_collateral"]
@@ -205,12 +250,14 @@ class LiveSession:
         rows.sort(key=lambda g: -g["return_pct"])
         return rows
 
-    def _bars_since(self, start: int) -> Dict[str, List[Any]]:
+    def _bars_since(self, start: int) -> dict[str, list[Any]]:
+        """Bars from index ``start`` on, so the client only fetches what it has not seen."""
         bars = self.market.recorder.bars
         keys = ("time", "open", "high", "low", "close", "volume", "mark", "index", "open_interest", "spread", "predicted_funding")
         return {key: [(_r(v, 5) if isinstance(v, float) else v) for v in bars[key][start:]] for key in keys}
 
-    def _summary(self) -> Dict[str, Any]:
+    def _summary(self) -> dict[str, Any]:
+        """Market-quality statistics, recomputed at most every 5 simulated seconds because they are the expensive part of the state."""
         market = self.market
         if market.time - self._summary_time >= 5.0 or market.finished or not self._summary_cache:
             bars = market.recorder.bars
@@ -221,7 +268,8 @@ class LiveSession:
             self._summary_time = market.time
         return self._summary_cache
 
-    def state(self, bars_since: int = 0) -> Dict[str, Any]:
+    def state(self, bars_since: int = 0) -> dict[str, Any]:
+        """Everything the viewer needs for one refresh."""
         with self.lock:
             market = self.market
             config = market.config
@@ -229,19 +277,19 @@ class LiveSession:
             bid, ask = market.best_bid_price(), market.best_ask_price()
             liquidations = [
                 {
-                    "time": round(l.time, 2),
-                    "agent_id": l.agent_id,
-                    "agent_type": market.accounts[l.agent_id].agent_type,
-                    "side": "long" if l.side_closed is Side.SELL else "short",
-                    "quantity": l.quantity,
-                    "mark_price": _r(l.mark_price),
-                    "avg_fill_price": _r(l.avg_fill_price),
-                    "adl_quantity": l.adl_quantity,
-                    "bad_debt": _r(l.bad_debt, 2),
-                    "penalty": _r(l.penalty, 2),
-                    "deactivated": l.deactivated,
+                    "time": round(liq.time, 2),
+                    "agent_id": liq.agent_id,
+                    "agent_type": market.accounts[liq.agent_id].agent_type,
+                    "side": "long" if liq.side_closed is Side.SELL else "short",
+                    "quantity": liq.quantity,
+                    "mark_price": _r(liq.mark_price),
+                    "avg_fill_price": _r(liq.avg_fill_price),
+                    "adl_quantity": liq.adl_quantity,
+                    "bad_debt": _r(liq.bad_debt, 2),
+                    "penalty": _r(liq.penalty, 2),
+                    "deactivated": liq.deactivated,
                 }
-                for l in market.recorder.liquidations[-100:]
+                for liq in market.recorder.liquidations[-100:]
             ]
             orders = [
                 {
@@ -308,7 +356,14 @@ class LiveSession:
                 "groups": self._groups(accounts),
                 "liquidations": liquidations,
                 "funding": [
-                    {"time": round(f.time, 1), "rate": f.rate, "premium": f.premium, "mark": _r(f.mark_price), "index": _r(f.index_price), "paid_by_longs": round(f.total_paid_by_longs, 2)}
+                    {
+                        "time": round(f.time, 1),
+                        "rate": f.rate,
+                        "premium": f.premium,
+                        "mark": _r(f.mark_price),
+                        "index": _r(f.index_price),
+                        "paid_by_longs": round(f.total_paid_by_longs, 2),
+                    }
                     for f in market.recorder.funding
                 ],
                 "news": [{"time": round(n.time, 1), "headline": n.headline, "log_jump": n.log_jump} for n in market.recorder.news[-50:]],
@@ -316,7 +371,8 @@ class LiveSession:
                 "summary": self._summary(),
             }
 
-    def account_detail(self, agent_id: str) -> Dict[str, Any]:
+    def account_detail(self, agent_id: str) -> dict[str, Any]:
+        """Drill-down for one account: snapshot, strategy parameters, orders, fills and equity path."""
         with self.lock:
             market = self.market
             if agent_id not in market.accounts:
@@ -325,7 +381,11 @@ class LiveSession:
             agent = market.agents[agent_id]
             recorder = market.recorder
             trades = [t for t in recorder.trades[-5000:] if t.buyer == agent_id or t.seller == agent_id][-60:]
-            params = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in vars(agent).items() if not k.startswith("_") and isinstance(v, (int, float, str, bool))}
+            params = {
+                k: (round(v, 4) if isinstance(v, float) else v)
+                for k, v in vars(agent).items()
+                if not k.startswith("_") and isinstance(v, (int, float, str, bool))
+            }
             if hasattr(agent, "action_distribution"):
                 params.update({f"action {name}": share for name, share in agent.action_distribution().items()})
             return {
@@ -333,7 +393,15 @@ class LiveSession:
                 "params": params,
                 "private_signals": agent_id in market._signal_subscribers,
                 "orders": [
-                    {"order_id": o.order_id, "side": o.side.value, "price": round(o.price * market.tick_size, 6), "remaining": o.remaining, "quantity": o.quantity, "time": round(o.time, 2), "tag": o.tag}
+                    {
+                        "order_id": o.order_id,
+                        "side": o.side.value,
+                        "price": round(o.price * market.tick_size, 6),
+                        "remaining": o.remaining,
+                        "quantity": o.quantity,
+                        "time": round(o.time, 2),
+                        "tag": o.tag,
+                    }
                     for o in market.book.orders_of(agent_id)
                 ],
                 "trades": [
@@ -348,5 +416,9 @@ class LiveSession:
                     }
                     for t in reversed(trades)
                 ],
-                "equity_series": {"time": recorder.account_times, "equity": [round(v, 2) for v in recorder.account_equity.get(agent_id, [])], "position": recorder.account_position.get(agent_id, [])},
+                "equity_series": {
+                    "time": recorder.account_times,
+                    "equity": [round(v, 2) for v in recorder.account_equity.get(agent_id, [])],
+                    "position": recorder.account_position.get(agent_id, []),
+                },
             }

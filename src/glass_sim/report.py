@@ -7,29 +7,34 @@ loaded back from disk in exactly the same way.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
+from typing import Any, Optional
 
 Fmt = Callable[[Any], str]
 
 
 def _num(digits: int = 2) -> Fmt:
+    """Formatter with ``digits`` decimals and thousands separators."""
     return lambda v: "—" if v is None else f"{v:,.{digits}f}"
 
 
 def _int(v: Any) -> str:
+    """Integer formatter with thousands separators."""
     return "—" if v is None else f"{int(v):,}"
 
 
 def _pct(digits: int = 2) -> Fmt:
+    """Signed percentage formatter."""
     return lambda v: "—" if v is None else f"{v:+.{digits}f}%"
 
 
 def _rate(v: Any) -> str:
+    """Funding-rate formatter (percent with four decimals)."""
     return "—" if v is None else f"{v * 100:+.4f}%"
 
 
 # (key, label, formatter). The same keys are used by the comparison report.
-SUMMARY_SECTIONS: List[Tuple[str, List[Tuple[str, str, Fmt]]]] = [
+SUMMARY_SECTIONS: list[tuple[str, list[tuple[str, str, Fmt]]]] = [
     (
         "Activity",
         [
@@ -90,7 +95,7 @@ SUMMARY_SECTIONS: List[Tuple[str, List[Tuple[str, str, Fmt]]]] = [
 ]
 
 # (key, header, width, formatter) for the per-agent table.
-AGENT_COLUMNS: List[Tuple[str, str, int, Fmt]] = [
+AGENT_COLUMNS: list[tuple[str, str, int, Fmt]] = [
     ("agent_id", "agent", 14, str),
     ("agent_type", "type", 18, str),
     ("position", "pos", 8, _int),
@@ -110,7 +115,7 @@ AGENT_COLUMNS: List[Tuple[str, str, int, Fmt]] = [
     ("active", "status", 7, lambda v: "active" if v else "OUT"),
 ]
 
-GROUP_COLUMNS: List[Tuple[str, str, int, Fmt]] = [
+GROUP_COLUMNS: list[tuple[str, str, int, Fmt]] = [
     ("agent_type", "type", 19, str),
     ("agents", "n", 4, _int),
     ("inactive", "out", 4, _int),
@@ -126,7 +131,8 @@ GROUP_COLUMNS: List[Tuple[str, str, int, Fmt]] = [
 ]
 
 
-def _table(rows: Sequence[Dict[str, Any]], columns: List[Tuple[str, str, int, Fmt]]) -> List[str]:
+def _table(rows: Sequence[dict[str, Any]], columns: list[tuple[str, str, int, Fmt]]) -> list[str]:
+    """Fixed-width text table; the first column is left-aligned, the rest right-aligned."""
     header = "  ".join(h.rjust(w) if i else h.ljust(w) for i, (_, h, w, _) in enumerate(columns))
     lines = [header, "-" * len(header)]
     for row in rows:
@@ -139,7 +145,8 @@ def _table(rows: Sequence[Dict[str, Any]], columns: List[Tuple[str, str, int, Fm
     return lines
 
 
-def format_report(summary: Dict[str, Any], groups: Sequence[Dict[str, Any]], agents: Optional[Sequence[Dict[str, Any]]] = None) -> str:
+def format_report(summary: dict[str, Any], groups: Sequence[dict[str, Any]], agents: Optional[Sequence[dict[str, Any]]] = None) -> str:
+    """Render the summary sections, the per-type table and optionally the per-agent table as text."""
     lines = [
         f"Scenario {summary.get('scenario')}  seed {summary.get('seed')}  transparency {summary.get('transparency')}  "
         f"duration {summary.get('duration_seconds', 0) / 3600:.2f}h",

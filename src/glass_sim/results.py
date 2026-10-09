@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from statistics import median
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from statistics import median
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from .account import AccountSnapshot
 from .analysis import market_summary, stylized_facts
-from .report import format_report
 from .config import MarketConfig
 from .recorder import Recorder
+from .report import format_report
 
 if TYPE_CHECKING:  # pragma: no cover
     from .market import PerpetualMarket
@@ -21,19 +21,22 @@ if TYPE_CHECKING:  # pragma: no cover
 
 @dataclass
 class SimulationResult:
+    """Everything a run produced, with derived tables and exports."""
+
     config: MarketConfig
     seed: int
     end_time: float
     recorder: Recorder
-    accounts: List[AccountSnapshot]
+    accounts: list[AccountSnapshot]
     insurance_fund: float
     fees_collected: float
     conservation_error: float
     events_processed: int
-    order_event_counts: Dict[str, int] = field(default_factory=dict)
+    order_event_counts: dict[str, int] = field(default_factory=dict)
 
     @classmethod
-    def from_market(cls, market: "PerpetualMarket") -> "SimulationResult":
+    def from_market(cls, market: PerpetualMarket) -> SimulationResult:
+        """Snapshot a market (finished or not)."""
         return cls(
             config=market.config,
             seed=market.seed,
@@ -51,17 +54,21 @@ class SimulationResult:
 
     @property
     def trades(self):
+        """Every trade of the run."""
         return self.recorder.trades
 
     @property
     def liquidations(self):
+        """Every liquidation event of the run."""
         return self.recorder.liquidations
 
     @property
-    def bars(self) -> Dict[str, List[Optional[float]]]:
+    def bars(self) -> dict[str, list[Optional[float]]]:
+        """Per-interval time series, by field."""
         return self.recorder.bars
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
+        """Market-quality metrics plus run-level counts; every key is documented in ``docs/metrics.md``."""
         market = market_summary(self.recorder.bars, self.config.record_interval)
         liquidations = self.recorder.liquidations
         funding = self.recorder.funding
@@ -74,9 +81,9 @@ class SimulationResult:
                 "agents": len(self.accounts),
                 "active_agents_final": sum(1 for a in self.accounts if a.active),
                 "liquidations": len(liquidations),
-                "liquidated_contracts": sum(l.quantity for l in liquidations),
-                "adl_contracts": sum(l.adl_quantity for l in liquidations),
-                "bad_debt": sum(l.bad_debt for l in liquidations),
+                "liquidated_contracts": sum(liq.quantity for liq in liquidations),
+                "adl_contracts": sum(liq.adl_quantity for liq in liquidations),
+                "bad_debt": sum(liq.bad_debt for liq in liquidations),
                 "funding_settlements": len(funding),
                 "mean_funding_rate": (sum(f.rate for f in funding) / len(funding)) if funding else None,
                 "insurance_fund_final": self.insurance_fund,
@@ -90,21 +97,24 @@ class SimulationResult:
         )
         return market
 
-    def stylized_facts(self, horizons_seconds=(10, 60, 300)) -> Dict[str, Dict[str, Optional[float]]]:
+    def stylized_facts(self, horizons_seconds=(10, 60, 300)) -> dict[str, dict[str, Optional[float]]]:
+        """Return statistics of the trade price at several horizons."""
         return stylized_facts(self.recorder.bars["close"], self.config.record_interval, horizons_seconds)
 
-    def agent_table(self) -> List[Dict[str, Any]]:
+    def agent_table(self) -> list[dict[str, Any]]:
+        """One row per account, best PnL first."""
         rows = [asdict(snapshot) for snapshot in self.accounts]
         rows.sort(key=lambda row: row["total_pnl"], reverse=True)
         return rows
 
-    def group_table(self) -> List[Dict[str, Any]]:
+    def group_table(self) -> list[dict[str, Any]]:
         """PnL, risk and activity aggregated by agent type."""
         return group_table([asdict(snapshot) for snapshot in self.accounts])
 
     # ------------------------------------------------------------- export
 
     def to_frames(self):
+        """Pandas DataFrames of every recorded series (requires pandas)."""
         return self.recorder.to_frames()
 
     def report(self, agents: bool = False) -> str:
@@ -112,6 +122,7 @@ class SimulationResult:
         return format_report(self.summary(), self.group_table(), self.agent_table() if agents else None)
 
     def print_report(self, agents: bool = False) -> None:
+        """Print ``report()``."""
         print(self.report(agents=agents))
 
     def save(self, directory: Union[str, Path]) -> Path:
@@ -133,9 +144,9 @@ class SimulationResult:
         return path
 
 
-def group_table(agents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def group_table(agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Aggregate per-agent rows (as produced by ``agent_table``) by agent type."""
-    by_type: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in agents:
         by_type[row["agent_type"]].append(row)
     rows = []
@@ -171,13 +182,14 @@ def group_table(agents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 class SavedRun:
     """A run loaded back from a directory written by ``SimulationResult.save``."""
 
-    summary: Dict[str, Any]
-    agents: List[Dict[str, Any]]
-    groups: List[Dict[str, Any]]
+    summary: dict[str, Any]
+    agents: list[dict[str, Any]]
+    groups: list[dict[str, Any]]
     source: str
 
     @classmethod
-    def load(cls, directory: Union[str, Path]) -> "SavedRun":
+    def load(cls, directory: Union[str, Path]) -> SavedRun:
+        """Read ``summary.json`` and ``agents.json``; groups are rebuilt so the aggregation code stays in one place."""
         path = Path(directory)
         agents = json.loads((path / "agents.json").read_text())
         return cls(

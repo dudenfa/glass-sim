@@ -13,15 +13,19 @@ from typing import Optional, Union
 
 
 class Side(str, Enum):
+    """Buy or sell; ``sign`` turns it into a position direction."""
+
     BUY = "buy"
     SELL = "sell"
 
     @property
     def sign(self) -> int:
+        """+1 for buy, -1 for sell."""
         return 1 if self is Side.BUY else -1
 
     @property
-    def opposite(self) -> "Side":
+    def opposite(self) -> Side:
+        """The other side."""
         return Side.SELL if self is Side.BUY else Side.BUY
 
 
@@ -56,9 +60,11 @@ class Transparency(str, Enum):
 
     @property
     def level(self) -> int:
+        """Ordinal of the level, for comparisons."""
         return {"anonymous": 0, "attributed": 1, "full": 2}[self.value]
 
-    def allows(self, required: "Transparency") -> bool:
+    def allows(self, required: Transparency) -> bool:
+        """Whether this level reveals everything ``required`` reveals."""
         return self.level >= required.level
 
 
@@ -172,6 +178,8 @@ class OrderEvent:
 
 @dataclass(frozen=True)
 class LiquidationRecord:
+    """One liquidation event, as recorded for results and the viewer."""
+
     time: float
     agent_id: str
     side_closed: Side
@@ -187,6 +195,8 @@ class LiquidationRecord:
 
 @dataclass(frozen=True)
 class FundingRecord:
+    """One funding settlement."""
+
     time: float
     rate: float
     premium: float
@@ -197,6 +207,8 @@ class FundingRecord:
 
 @dataclass(frozen=True)
 class NewsRecord:
+    """A news item as applied to the index, or an exogenous shock from ``shock_index``."""
+
     time: float
     headline: str
     log_jump: float

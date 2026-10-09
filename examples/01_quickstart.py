@@ -1,6 +1,6 @@
 """Run the reference market for one simulated hour and inspect the results.
 
-    PYTHONPATH=src python examples/glass/01_quickstart.py
+PYTHONPATH=src python examples/01_quickstart.py
 """
 
 from glass_sim import PerpetualMarket, parse_duration, scenarios

@@ -17,14 +17,14 @@ The episode ends when the market reaches the end of the episode duration
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Optional
 
 import gymnasium as gym
 import numpy as np
 
 from .. import scenarios
 from ..agents.base import ExternalAgent
-from ..config import AgentSpec, MarketConfig, parse_duration
+from ..config import AgentSpec, MarketConfig
 from ..market import PerpetualMarket
 from ..types import Transparency
 from .actions import ACTION_NAMES, ActionConfig, ActionSpace
@@ -41,7 +41,7 @@ class EnvConfig:
     scenario: str = "default"
     transparency: Optional[str] = None
     episode_duration: float = 3600.0
-    train_seeds: Tuple[int, ...] = tuple(range(1, 9))
+    train_seeds: tuple[int, ...] = tuple(range(1, 9))
     collateral: float = 100_000.0
     wake_interval: float = 5.0
     private_signals: bool = False
@@ -51,6 +51,7 @@ class EnvConfig:
     reward: RewardConfig = field(default_factory=RewardConfig)
 
     def market_config(self, seed: int, duration: Optional[float] = None) -> MarketConfig:
+        """The scenario plus the learner as an extra external participant."""
         config = scenarios.get(self.scenario, seed=seed, duration=float(duration or self.episode_duration))
         if self.transparency:
             config = replace(config, transparency=Transparency(self.transparency))
@@ -69,6 +70,8 @@ class EnvConfig:
 
 
 class PerpTradingEnv(gym.Env):
+    """Single-learner Gymnasium environment; see the module docstring for the episode semantics."""
+
     metadata = {"render_modes": []}
 
     def __init__(self, config: Optional[EnvConfig] = None) -> None:
@@ -93,6 +96,7 @@ class PerpTradingEnv(gym.Env):
 
     @property
     def view(self):
+        """The learner's ``MarketView``."""
         return self.market.view(LEARNER_ID)
 
     def _advance(self) -> bool:
@@ -104,6 +108,7 @@ class PerpTradingEnv(gym.Env):
         return market.pending_decision == LEARNER_ID
 
     def action_masks(self) -> np.ndarray:
+        """Valid actions for MaskablePPO; only ``hold`` when no decision is pending."""
         if self.market is None or self.market.pending_decision != LEARNER_ID:
             mask = np.zeros(self.actions.n, dtype=bool)
             mask[0] = True
@@ -111,12 +116,14 @@ class PerpTradingEnv(gym.Env):
         return self.actions.mask(self.view)
 
     def episode_seed(self) -> int:
+        """Seed of the next episode, striding through the training seeds so parallel workers never share a world."""
         seeds = self.config.train_seeds
         return int(seeds[(self.seed_offset + self._episode * self.seed_stride) % len(seeds)])
 
     # ------------------------------------------------------------- gym API
 
-    def reset(self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None):
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None):
+        """Build a fresh market and advance to the learner's first decision."""
         super().reset(seed=seed)
         options = options or {}
         market_seed = int(options["market_seed"]) if "market_seed" in options else self.episode_seed()
@@ -129,6 +136,7 @@ class PerpTradingEnv(gym.Env):
         return self.encoder.encode(self.view), {"market_seed": market_seed}
 
     def step(self, action: int):
+        """Send the decoded action, run to the next decision and return the exit-value reward."""
         assert self.market is not None and self.tracker is not None, "call reset() first"
         action = int(action)
         self.action_counts[action] += 1

@@ -129,6 +129,7 @@ def test_multi_agent_market_rewards_add_up_per_learner():
 
 def test_ppo_update_handles_a_single_sample_last_minibatch():
     import torch
+
     from glass_sim.rl.marl import _make_model, ppo_update
 
     model = _make_model(32, 9, [16, 16], 3e-4, seed=0)

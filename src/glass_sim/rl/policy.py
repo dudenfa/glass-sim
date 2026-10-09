@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 
@@ -27,6 +27,8 @@ from .observation import ObservationConfig, ObservationEncoder
 
 
 class HoldPolicy:
+    """Baseline: always ``hold``."""
+
     name = "hold"
 
     def __call__(self, obs: np.ndarray, mask: np.ndarray, rng: np.random.Generator) -> int:
@@ -34,6 +36,8 @@ class HoldPolicy:
 
 
 class RandomPolicy:
+    """Baseline: uniform over the valid actions."""
+
     name = "random"
 
     def __call__(self, obs: np.ndarray, mask: np.ndarray, rng: np.random.Generator) -> int:
@@ -57,14 +61,15 @@ class ModelPolicy:
         return int(action)
 
 
-def load_run_config(model_path: Union[str, Path]) -> Dict[str, Any]:
+def load_run_config(model_path: Union[str, Path]) -> dict[str, Any]:
     """The ``config.json`` written next to a checkpoint by the training script."""
     path = Path(model_path)
     config_path = path.parent / "config.json"
     return json.loads(config_path.read_text()) if config_path.exists() else {}
 
 
-def encoder_and_actions_from_config(run_config: Dict[str, Any]) -> "tuple[ObservationEncoder, ActionSpace]":
+def encoder_and_actions_from_config(run_config: dict[str, Any]) -> tuple[ObservationEncoder, ActionSpace]:
+    """Rebuild the exact observation and action spaces a checkpoint was trained with."""
     env = run_config.get("env", {})
     obs_cfg = ObservationConfig(**env.get("observation", {}))
     if env.get("private_signals"):
@@ -97,6 +102,7 @@ class PolicyAgent(Agent):
         self.decisions = 0
 
     def on_wakeup(self, view, rng):
+        """Encode, mask, ask the policy, decode; an invalid choice falls back to ``hold``."""
         obs = self.encoder.encode(view)
         mask = self.actions.mask(view)
         action = int(self.policy(obs, mask, rng))
@@ -106,12 +112,14 @@ class PolicyAgent(Agent):
         self.decisions += 1
         return self.actions.decode(action, view)
 
-    def action_distribution(self) -> Dict[str, float]:
+    def action_distribution(self) -> dict[str, float]:
+        """Share of each action taken so far, for reports and the viewer."""
         total = max(1, int(self.action_counts.sum()))
         return {name: round(float(count) / total, 4) for name, count in zip(ACTION_NAMES, self.action_counts)}
 
 
 def policy_agent_from_checkpoint(model_path: Union[str, Path], deterministic: bool = True, agent_type: str = "rl_agent") -> PolicyAgent:
+    """A ``PolicyAgent`` wired exactly as the checkpoint was trained (spaces and wake rate)."""
     run_config = load_run_config(model_path)
     encoder, actions = encoder_and_actions_from_config(run_config)
     wake = float(run_config.get("env", {}).get("wake_interval", 5.0))

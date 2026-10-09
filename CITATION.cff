@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use GLASS in your research, please cite it as below."
+title: "GLASS: A Transparent Perpetual-Futures Market Simulator for Multi-Agent Reinforcement Learning"
+abstract: >-
+  GLASS is an open, reproducible agent-based simulator of a perpetual-futures
+  exchange with margin, liquidation cascades, auto-deleveraging, funding and an
+  index price, in which market transparency (anonymous, attributed, or fully
+  public positions) is an experimental variable. It provides a heterogeneous
+  scripted trader ecology, a Gymnasium environment, a multi-agent PPO trainer
+  and an evaluation protocol with paired held-out seeds.
+type: software
+authors:
+  - family-names: Mantovani
+    given-names: Martino
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/dudenfa/glass-sim"
+keywords:
+  - market simulation
+  - limit order book
+  - perpetual futures
+  - multi-agent reinforcement learning
+  - market transparency

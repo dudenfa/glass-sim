@@ -1,36 +1,75 @@
 # GLASS
 
-**GLASS** is a transparent perpetual-futures market simulator for multi-agent
-reinforcement learning. Agents trade long and short with leverage and margin,
-pay funding, and get liquidated in a public limit order book whose
-transparency (anonymous, attributed, or fully public positions as on
-Hyperliquid) is an experimental setting. It ships nine scripted trader types,
-a live browser viewer, a Gymnasium environment, a multi-agent (IPPO) trainer,
-and an evaluation protocol with paired held-out seeds and fair controls.
+**A transparent perpetual-futures market simulator for multi-agent reinforcement learning.**
 
-| | name |
-|---|---|
-| simulator | GLASS |
-| repository / pip project | `glass-sim` |
-| Python package | `glass_sim` |
-| command | `glass` |
+[![tests](https://github.com/dudenfa/glass-sim/actions/workflows/tests.yml/badge.svg)](https://github.com/dudenfa/glass-sim/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python ≥3.10](https://img.shields.io/badge/python-%E2%89%A53.10-blue.svg)](pyproject.toml)
 
-Documentation: **[docs/glass/README.md](docs/glass/README.md)** · metrics:
-[docs/glass/METRICS.md](docs/glass/METRICS.md) · project state:
-[PROJECT_STATE_V2.md](PROJECT_STATE_V2.md) · paper material: [paper/](paper/).
+GLASS simulates a perpetual-futures exchange from the order book up: agents
+trade long and short with leverage, post margin, pay funding and get
+liquidated, and prices, liquidity and liquidation cascades emerge from their
+interaction rather than from replayed data. Its distinguishing feature is that
+**market transparency is an experimental variable**: the same population can
+trade on an anonymous exchange, on a venue where every order and trade carries
+its owner, or on a fully transparent on-chain book where every account's
+position and liquidation price is public, as on Hyperliquid. The package ships
+nine scripted trader types, a live browser viewer, a Gymnasium environment, a
+multi-agent PPO trainer and an evaluation protocol with paired held-out seeds
+and fair controls.
 
-The repository also keeps the **legacy spot-market thesis code**
-(`marl_trading.market`, `marl_trading.rl`, `marl_trading.marl`): the one-asset
-spot ecology used for the earlier RL and MARL thesis experiments, frozen at tag
-`v0.1-spot-thesis` (see `PROJECT_STATE.md`).
+![A simulated 4-hour session: perpetual and index price with news and liquidations](paper/figures/fig_session.png)
 
-### GLASS in 30 seconds
+## Features
+
+- **Discrete-event exchange**: price-time priority order book on integer ticks,
+  GTC / IOC / post-only / reduce-only orders, self-trade prevention, maker and
+  taker fees, per-agent Poisson clocks and random order latency.
+- **Perpetual mechanics**: cross-margin accounts, worst-case initial margin,
+  liquidation with auto-deleveraging and an insurance fund, a robust mark price,
+  hourly funding, an index with stochastic volatility and news jumps.
+- **Selectable transparency** (anonymous, attributed, full) enforced at the
+  agent's view, plus genuinely private information (early noisy news signals).
+- **Reproducible and paired**: one random stream per agent and separate streams
+  for the exogenous world, so two treatments with the same seed face exactly
+  the same index path and news.
+- **Scripted ecology** of nine trader types, including transparency-aware
+  strategies (copy trading, wallet watching, liquidation hunting), and eight
+  one-change-at-a-time scenarios.
+- **Analysis**: market-quality metrics, stylized facts, per-agent path-risk
+  statistics, text reports, run and seed-panel comparisons, pandas export.
+- **Live viewer**: candles, book with owners, trade tape, positions,
+  liquidations, funding and market quality, all in the browser.
+- **Reinforcement learning**: Gymnasium environment with action masks and an
+  exit-value reward, MaskablePPO training, held-out evaluation against random,
+  hold and scripted market-maker controls, and an independent-PPO multi-agent
+  trainer.
+- **Validated**: an accounting invariant checked every simulated second, 56
+  tests, and heavy tails and volatility clustering in the generated prices.
+- **Fast**: 4 simulated hours with 88 agents (about 130,000 events) in roughly
+  5 seconds on a laptop; the core depends only on NumPy.
+
+## Install
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,analysis]"
-glass run --scenario default --seed 1        # 4 simulated hours, ~5 s
-glass serve --open                           # live viewer on http://127.0.0.1:8766
+git clone https://github.com/dudenfa/glass-sim.git
+cd glass-sim
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[all]"       # simulator + RL (PyTorch via Stable-Baselines3) + analysis + dev tools
+```
+
+`pip install -e ".[dev]"` installs the simulator and the test tools only;
+`.[analysis]` adds pandas and matplotlib, `.[rl]` adds Gymnasium,
+Stable-Baselines3 and sb3-contrib.
+
+## Quick start
+
+```bash
+glass scenarios                                   # list the scenarios
+glass run --scenario default --seed 1 --agents    # 4 simulated hours, full report
+glass serve --open                                # live viewer at http://127.0.0.1:8766
+glass compare "scenario=default seed=1" "scenario=default seed=1 transparency=anonymous"
+glass compare "scenario=default" "scenario=anonymous" --seeds 1-10   # paired seed panel
 ```
 
 ```python
@@ -38,170 +77,147 @@ from glass_sim import PerpetualMarket, scenarios
 
 result = PerpetualMarket(scenarios.default(seed=1)).run()
 result.print_report()
+summary = result.summary()  # liquidity, price discovery, liquidations, funding, ...
+frames = result.to_frames()  # pandas DataFrames: bars, trades, liquidations, equity, ...
 ```
 
-## Legacy spot-market code
+A custom agent is a class with an `on_wakeup` method. It sees the market
+through a view that enforces the transparency level and returns a list of
+orders:
 
-The rest of this README describes the original spot-market code (V1).
+```python
+from dataclasses import replace
+from glass_sim import Agent, AgentSpec, MarketOrder, PerpetualMarket, Side, scenarios
 
-## Current Focus
 
-The main research question is:
+class Contrarian(Agent):
+    agent_type = "contrarian"
 
-> In a synthetic market where price, liquidity, and volatility emerge from agent interaction through an order book, what behaviors and regimes can we observe and study?
+    def on_wakeup(self, view, rng):
+        prices = view.price_history(60)
+        if len(prices) < 60:
+            return []
+        side = Side.SELL if prices[-1] > prices[0] else Side.BUY
+        return [MarketOrder(side, 5)]
 
-Right now the repo is focused on:
-- building a stable synthetic market ecology
-- visualizing market behavior live
-- preparing the ground for RL and then MARL agents
 
-## Repo Docs
+base = scenarios.default(seed=1)
+config = replace(base, agents=base.agents + (AgentSpec(Contrarian, count=5, collateral=20_000.0),))
+PerpetualMarket(config).run().print_report()
+```
 
-- `THESIS.md`: initial whitepaper / manifesto
-- `PROJECT_STATE.md`: working memory and implementation state
+More in [`examples/`](examples/) and in the [user guide](docs/user-guide.md).
 
-## Quick Start
+## Transparency levels
 
-Python `3.9+` is expected.
+| information | ANONYMOUS | ATTRIBUTED | FULL |
+|---|:-:|:-:|:-:|
+| aggregated book, trade prices and sizes | ✓ | ✓ | ✓ |
+| mark, index, funding, open interest | ✓ | ✓ | ✓ |
+| owner of every resting order | | ✓ | ✓ |
+| buyer and seller of every trade | | ✓ | ✓ |
+| every account's position, entry, leverage, PnL, liquidation price | | | ✓ |
 
-Create a virtual environment, activate it, and install the runtime dependencies:
+Agents always see their own account and orders. Asking for hidden information
+raises `TransparencyError`; `view.can_see(level)` lets an agent adapt.
+
+## Scenarios
+
+| scenario | agents | what changes relative to `default` |
+|---|---:|---|
+| `default` | 88 | reference ecology: nine trader types, FULL transparency, 4 hours |
+| `anonymous` / `attributed` | 88 | lower transparency, same population |
+| `calm` | 88 | half the index volatility, a quarter of the news |
+| `volatile` | 88 | double the volatility and news, larger jumps |
+| `retail_frenzy` | 148 | twice the retail traders, all at 20-40x leverage |
+| `no_arbitrage` | 84 | without the basis arbitrageurs that anchor the perp to the index |
+| `small` | 21 | 30 minutes, for tests and quick checks |
+
+Any field can be overridden, for example `scenarios.default(seed=4, transparency=Transparency.ANONYMOUS)`.
+
+## Reinforcement learning
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install --upgrade pip
-python3 -m pip install -r requirements.txt
+glass train --name my_agent --timesteps 1000000 --train-seeds 1000-1999 --episode-duration 4h
+glass evaluate checkpoints/my_agent --seeds 31-40          # model vs scripted market maker, random, hold, no agent
+glass serve --rl checkpoints/my_agent                      # watch the trained agent trade
+
+python -m glass_sim.rl.marl --name my_marl --learners 3 --timesteps 600000            # several learners together (IPPO)
+python -m glass_sim.rl.marl_evaluate checkpoints/my_marl --single checkpoints/my_agent --seeds 31-40
 ```
 
-Notes:
-- `numpy` is required by the simulator and live viewer
-- `Pillow` is used for the saved world/replay images
-- `gymnasium` and `stable-baselines3` are included for the first PPO experiment
-- the first install may take longer now because `stable-baselines3` pulls in CPU `torch`
-- for optional test/development tools:
+The learner observes 32 scaled features (market state, own account and a
+transparency block that is zero when hidden), chooses among 9 masked actions,
+and is rewarded by the change of its account's *exit value*: what the account
+would be worth if the position were closed against the real book, so costs and
+illiquidity are visible immediately. Details in the
+[user guide](docs/user-guide.md#driving-agents-from-outside-rl) and in
+[`docs/research/PROJECT_STATE.md`](docs/research/PROJECT_STATE.md) (section 10).
 
-  ```bash
-  python3 -m pip install -e ".[dev]"
-  ```
+## Results
 
-- for editable RL work:
+The simulator reproduces heavy-tailed returns whose kurtosis falls with the
+horizon, near-zero autocorrelation of returns and positive, slowly decaying
+autocorrelation of absolute returns. In the scripted ecology, transparency
+leaves quoted spreads unchanged but raises volume, and the agents that exploit
+visible information lose money doing so. A single PPO agent discovers passive
+liquidity provision on its own and is profitable on unseen markets, yet does
+not beat a scripted market maker with the same capital and speed; giving it
+raw tables of other traders' activity makes it worse. Three agents trained
+together match three scripted market makers once trained long enough, and
+diversify their inventory direction. Figures, tables and the paper outline
+are in [`paper/`](paper/); the full research log with every number is in
+[`docs/research/PROJECT_STATE.md`](docs/research/PROJECT_STATE.md).
 
-  ```bash
-  python3 -m pip install -e ".[rl,dev]"
-  ```
-
-- `pytest` is included by `.[dev]`
-- `matplotlib` is still optional for extra static analysis plots
-
-## Run The Live Viewer
-
-From the repo root:
-
-```bash
-PYTHONPATH=src python3 scripts/serve_market_view.py --paused --port 8765
-```
-
-Then open:
-
-`http://127.0.0.1:8765`
-
-Useful variant:
-
-```bash
-PYTHONPATH=src python3 scripts/serve_market_view.py --port 8765
-```
-
-That starts the market in autoplay mode.
-
-## Run A Scripted Demo
-
-```bash
-PYTHONPATH=src python3 scripts/run_market_demo.py --seed 7 --horizon 240 --output-dir artifacts/demo_seed7_h240
-```
-
-This writes:
-- event logs
-- summary JSON
-- optional replay figures
-
-## Replay A Saved Event Log
-
-```bash
-PYTHONPATH=src python3 scripts/replay_market.py artifacts/demo_seed7_h240/market_events.jsonl
-```
-
-## Run Tests
-
-```bash
-PYTHONPATH=src pytest
-```
-
-## RL Groundwork
-
-The repo now includes the first single-agent RL boundary in:
-- `src/marl_trading/rl/boundary.py`
-- `src/marl_trading/rl/env.py`
-
-Current status:
-- one learning-controlled agent can already be inserted into the scripted market
-- the environment exposes a compact vector observation and a small discrete action set
-- PPO dependencies are installed with `requirements.txt` or `.[rl]`
-- reward shaping supports both a linear absolute-inventory penalty and a separate quadratic inventory-risk penalty
-- train/eval entry points live in `scripts/train_rl_agent.py` and `scripts/eval_rl_agent.py`
-
-Quick smoke check:
-
-```bash
-PYTHONPATH=src python3 -c "from marl_trading.rl import RLAction, RLActionType, SingleAgentMarketEnv; env = SingleAgentMarketEnv(); obs = env.reset(seed=7, horizon=32); print('obs_dim=', len(obs)); _, reward, done, info = env.step(RLAction(RLActionType.HOLD)); print('reward=', round(reward, 4), 'done=', done, 'step=', info['step_index'])"
-```
-
-Example train command:
-
-```bash
-PYTHONPATH=src python3 scripts/train_rl_agent.py \
-  --preset baseline \
-  --learning-agent-id trend_01 \
-  --total-timesteps 50000 \
-  --inv-penalty 0.0 \
-  --inv-risk-penalty 0.0005 \
-  --checkpoint checkpoints/ppo_baseline_trend_01_zeroinv_risk5e-4_50k.zip
-```
-
-Example eval command:
-
-```bash
-PYTHONPATH=src python3 scripts/eval_rl_agent.py \
-  --checkpoint checkpoints/ppo_baseline_trend_01_zeroinv_risk5e-4_50k.zip \
-  --preset baseline \
-  --learning-agent-id trend_01 \
-  --inv-penalty 0.0 \
-  --inv-risk-penalty 0.0005 \
-  --output artifacts/rl_eval_baseline_trend_01_zeroinv_risk5e-4_50k.json
-```
-
-Both scripts preserve the existing long-form reward flags, accept the shorter aliases above, and record reward metadata including the base reward term, formula, and the two inventory-shaping coefficients.
-
-## Project Layout
+## Project structure
 
 ```text
-src/marl_trading/
-  agents/      scripted agent policies
-  exchange/    matching engine and order book
-  market/      simulator, fundamentals, news
-  portfolio/   spot portfolio and reservation logic
-  live/        local web viewer
-  analysis/    replay and plotting tools
-
-scripts/
-  serve_market_view.py
-  run_market_demo.py
-  replay_market.py
-  train_rl_agent.py
-  eval_rl_agent.py
+src/glass_sim/        the package
+  market.py           discrete-event engine: matching, margin, liquidation, ADL, funding
+  book.py, account.py order book and cross-margin accounts
+  config.py           ContractSpec, IndexConfig, NewsConfig, ..., MarketConfig
+  processes.py        index price, news, private signals
+  views.py            MarketView: what an agent can see at each transparency level
+  agents/             Agent base class, ExternalAgent, nine scripted traders
+  scenarios.py        ready-made populations
+  results.py, analysis.py, report.py, compare.py   metrics, stylized facts, reports, comparisons
+  rl/                 observation, actions, reward, Gymnasium env, training, evaluation, MARL
+  live/               browser viewer (session, HTTP server, static web app)
+  __main__.py         the `glass` command line
+tests/                test suite (pytest)
+examples/             runnable examples
+experiments/          training queue, evaluation pipeline and paper scripts
+checkpoints/          trained agents used in the paper, with their evaluations
+paper/                figures, tables, outline and the CEUR template
+docs/                 user guide, metrics reference, research notes
+legacy/               the earlier spot-market thesis code (V1), unmaintained
 ```
 
-## Status
+## Documentation
 
-This is still an early research codebase, not a packaged product.
+- [User guide](docs/user-guide.md): concepts, writing agents, configuration, results, viewer, RL.
+- [Metrics reference](docs/metrics.md): every field of the reports and JSON outputs.
+- [Project state](docs/research/PROJECT_STATE.md): design rationale, tuning log, validation evidence and all experimental results.
+- [Documentation index](docs/README.md).
 
-The live viewer is already usable and is the main way to inspect the synthetic market visually while the simulator is running.
+## Citing
+
+If you use GLASS in your research, please cite it (see [`CITATION.cff`](CITATION.cff)):
+
+```bibtex
+@software{mantovani2026glass,
+  author  = {Mantovani, Martino},
+  title   = {GLASS: A Transparent Perpetual-Futures Market Simulator for Multi-Agent Reinforcement Learning},
+  year    = {2026},
+  version = {0.1.0},
+  url     = {https://github.com/dudenfa/glass-sim}
+}
+```
+
+## Contributing and license
+
+Contributions are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md). Released
+under the [MIT License](LICENSE).
+
+The earlier spot-market code that preceded GLASS (the V1 thesis experiments)
+is kept, unmaintained, in [`legacy/`](legacy/).

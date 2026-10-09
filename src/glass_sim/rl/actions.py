@@ -27,7 +27,6 @@ nothing to close. Masked actions are never sampled by MaskablePPO.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 import numpy as np
 
@@ -49,12 +48,16 @@ ACTION_NAMES = [
 
 @dataclass(frozen=True)
 class ActionConfig:
+    """Order sizes as multiples of equity, plus the exposure cap."""
+
     small_leverage: float = 0.5
     large_leverage: float = 2.0
     max_leverage: float = 10.0
 
 
 class ActionSpace:
+    """Builds orders from action indices and tells which actions make sense in the current state."""
+
     names = ACTION_NAMES
 
     def __init__(self, config: ActionConfig = ActionConfig()) -> None:
@@ -62,11 +65,13 @@ class ActionSpace:
 
     @property
     def n(self) -> int:
+        """Number of actions."""
         return len(ACTION_NAMES)
 
     # ---------------------------------------------------------------- sizing
 
     def _size(self, view: MarketView, leverage: float) -> int:
+        """Contracts worth ``leverage`` times equity at the mark (at least one)."""
         equity = view.me.equity
         price = view.mark_price * view.contract_size
         if equity <= 0 or price <= 0:
@@ -74,6 +79,7 @@ class ActionSpace:
         return max(1, int(equity * leverage / price))
 
     def _cap(self, view: MarketView) -> int:
+        """Largest worst-case position allowed."""
         return self._size(view, self.config.max_leverage)
 
     def _fits(self, view: MarketView, side: Side, quantity: int, replace_side: bool = False) -> bool:
@@ -97,6 +103,7 @@ class ActionSpace:
     # ------------------------------------------------------------------ masks
 
     def mask(self, view: MarketView) -> np.ndarray:
+        """Validity of every action right now; ``hold`` is always valid so the policy can never be stuck."""
         valid = np.zeros(self.n, dtype=bool)
         valid[0] = True
         if not view.me.active or view.me.equity <= 0:
@@ -116,7 +123,8 @@ class ActionSpace:
 
     # ---------------------------------------------------------------- decode
 
-    def decode(self, index: int, view: MarketView) -> List[Action]:
+    def decode(self, index: int, view: MarketView) -> list[Action]:
+        """Orders for action ``index`` (the caller checks the mask first)."""
         name = ACTION_NAMES[int(index)]
         small = self._size(view, self.config.small_leverage)
         large = self._size(view, self.config.large_leverage)
@@ -135,7 +143,7 @@ class ActionSpace:
             price = view.best_bid if side is Side.BUY else view.best_ask
             if price is None:
                 return []
-            actions: List[Action] = [Cancel(o.order_id) for o in view.my_orders() if o.side is side]
+            actions: list[Action] = [Cancel(o.order_id) for o in view.my_orders() if o.side is side]
             actions.append(LimitOrder(side, small, price, tif=TimeInForce.POST_ONLY, tag="rl"))
             return actions
         if name == "cancel_all":

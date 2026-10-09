@@ -31,9 +31,7 @@ LiquidationHunter   FULL transparency only: pushes the price toward clusters of
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Sequence, Tuple
-
-import numpy as np
+from typing import Optional
 
 from ..types import Action, Cancel, CancelAll, Fill, LimitOrder, MarketOrder, Side, TimeInForce, Transparency
 from ..views import MarketView
@@ -42,10 +40,12 @@ from .common import capacity, clamp, ema, move_toward, realized_vol_per_second, 
 
 
 def _floor_tick(price: float, tick: float) -> float:
+    """Round down to the tick grid (never below one tick)."""
     return max(tick, math.floor(price / tick + 1e-9) * tick)
 
 
 def _ceil_tick(price: float, tick: float) -> float:
+    """Round up to the tick grid (never below one tick)."""
     return max(tick, math.ceil(price / tick - 1e-9) * tick)
 
 
@@ -107,16 +107,24 @@ class MarketMaker(Agent):
         self._widen_until = -1.0
 
     def on_start(self, view, rng):
+        """Quote from scratch at time 0; there is nothing to reconcile yet."""
         return self._quotes(view, reconcile=False)
 
     def on_wakeup(self, view, rng):
+        """Re-quote, keeping orders whose price is still wanted so they keep their queue priority."""
         return self._quotes(view, reconcile=True)
 
     def on_news(self, news, view, rng):
+        """Pull every quote and re-quote wider: stale quotes right after a jump are free options for others."""
         self._widen_until = view.time + self.news_widen_seconds
         return [CancelAll()] + self._quotes(view, reconcile=False)
 
-    def desired_quotes(self, view: MarketView) -> List[Tuple[Side, float, int]]:
+    def desired_quotes(self, view: MarketView) -> list[tuple[Side, float, int]]:
+        """The ladder of ``(side, price, size)`` the maker wants right now.
+
+        Kept separate from order management so the pricing logic can be read
+        and tuned without touching how resting orders are reconciled.
+        """
         tick = view.tick_size
         mark = view.mark_price
         mid = view.mid
@@ -137,7 +145,7 @@ class MarketMaker(Agent):
         spacing = max(tick, fair * self.level_spacing_bps / 1e4)
         best_bid, best_ask = view.best_bid, view.best_ask
         level_size = max(self.base_size, self.level_fraction * max_pos)
-        quotes: List[Tuple[Side, float, int]] = []
+        quotes: list[tuple[Side, float, int]] = []
         for i in range(self.levels):
             growth = 1.0 + 0.5 * i
             bid_size = int(round(level_size * growth * (1.0 - q)))
@@ -156,12 +164,13 @@ class MarketMaker(Agent):
                 quotes.append((Side.SELL, round(ask, 10), ask_size))
         return quotes
 
-    def _quotes(self, view: MarketView, reconcile: bool) -> List[Action]:
+    def _quotes(self, view: MarketView, reconcile: bool) -> list[Action]:
+        """Turn desired quotes into actions, canceling only orders that are no longer wanted when ``reconcile`` is set."""
         desired = self.desired_quotes(view)
         tick = view.tick_size
-        actions: List[Action] = []
+        actions: list[Action] = []
         if reconcile:
-            wanted: Dict[Tuple[Side, int], int] = {(side, int(round(price / tick))): size for side, price, size in desired}
+            wanted: dict[tuple[Side, int], int] = {(side, int(round(price / tick))): size for side, price, size in desired}
             existing = set()
             for order in view.my_orders():
                 key = (order.side, int(round(order.price / tick)))
@@ -206,7 +215,7 @@ class NoiseTrader(Agent):
         mean_holding: float = 900.0,
         take_profit: float = 0.3,
         stop_loss: Optional[float] = None,
-        size_fraction: Tuple[float, float] = (0.3, 1.0),
+        size_fraction: tuple[float, float] = (0.3, 1.0),
         chase_bias: float = 0.25,
         stale_order_seconds: float = 120.0,
     ) -> None:
@@ -224,6 +233,7 @@ class NoiseTrader(Agent):
         self._close_time: Optional[float] = None
 
     def on_fill(self, fill: Fill, view: MarketView) -> None:
+        """Start the holding clock at the first fill, not at the order, so limit entries that fill late are not closed early."""
         if view.position == 0:
             self._entry_time = None
             self._close_time = None
@@ -231,7 +241,12 @@ class NoiseTrader(Agent):
             self._entry_time = fill.time
 
     def on_wakeup(self, view, rng):
-        actions: List[Action] = []
+        """Manage the open position first; otherwise maybe open one.
+
+        Stale resting entries are canceled so an old limit order cannot fill at
+        a price that no longer reflects what the trader wanted.
+        """
+        actions: list[Action] = []
         stale = [o for o in view.my_orders() if view.time - o.time > self.stale_order_seconds]
         actions.extend(Cancel(o.order_id) for o in stale)
         position = view.position
@@ -297,6 +312,7 @@ class MomentumTrader(Agent):
         self.clip_fraction = float(clip_fraction)
 
     def signal_bps(self, view: MarketView) -> Optional[float]:
+        """Fast-minus-slow EMA gap in bps, or ``None`` until enough history exists (a half-formed average is just noise)."""
         prices = view.price_history(int(self.slow_seconds))
         if len(prices) < self.slow_seconds / 4:
             return None
@@ -307,6 +323,7 @@ class MomentumTrader(Agent):
         return (fast - slow) / slow * 1e4
 
     def on_wakeup(self, view, rng):
+        """Scale the target with the signal; the dead band between entry and exit avoids flip-flopping around the threshold."""
         signal = self.signal_bps(view)
         if signal is None:
             return []
@@ -364,6 +381,7 @@ class BasisArbitrageur(Agent):
         self.funding_weight = float(funding_weight)
 
     def on_wakeup(self, view, rng):
+        """Compare the executable edge at the touch with the entry threshold and trade only behind a price limit."""
         index = view.index_price
         tick = view.tick_size
         funding_bps = self.funding_weight * view.predicted_funding_rate * 1e4
@@ -433,6 +451,7 @@ class InformedTrader(Agent):
         self._exit_time: Optional[float] = None
 
     def on_signal(self, signal, view, rng):
+        """Size the position by signal confidence and schedule the exit relative to the public release."""
         expected_bps = signal.expected_log_jump * 1e4
         if abs(expected_bps) < self.min_signal_bps:
             return []
@@ -443,6 +462,7 @@ class InformedTrader(Agent):
         return move_toward(view, self._target, max(1, int(cap * self.clip_fraction)), tag="informed")
 
     def on_wakeup(self, view, rng):
+        """Keep working toward the target until the exit time, then flatten; flatten leftovers when no signal is pending."""
         if self._exit_time is None:
             return move_toward(view, 0, max(1, abs(view.position)), tag="flatten") if view.position else []
         cap = capacity(view, self.leverage)
@@ -476,9 +496,9 @@ class Whale(Agent):
         wake_interval: float = 15.0,
         leverage: float = 3.0,
         start_probability: float = 0.03,
-        target_fraction: Tuple[float, float] = (0.3, 0.8),
-        campaign_seconds: Tuple[float, float] = (900.0, 2700.0),
-        hold_seconds: Tuple[float, float] = (600.0, 1800.0),
+        target_fraction: tuple[float, float] = (0.3, 0.8),
+        campaign_seconds: tuple[float, float] = (900.0, 2700.0),
+        hold_seconds: tuple[float, float] = (600.0, 1800.0),
         passive_fraction: float = 0.5,
     ) -> None:
         super().__init__(wake_interval=wake_interval)
@@ -493,7 +513,12 @@ class Whale(Agent):
         self._phase_end = 0.0
 
     def on_wakeup(self, view, rng):
-        actions: List[Action] = [Cancel(o.order_id) for o in view.my_orders()]
+        """Advance the campaign state machine and send the next TWAP slice.
+
+        Resting child orders are canceled every wakeup so unfilled passive
+        slices do not pile up behind a moving price.
+        """
+        actions: list[Action] = [Cancel(o.order_id) for o in view.my_orders()]
         now = view.time
         if self.state == "idle":
             if rng.random() < self.start_probability:
@@ -567,16 +592,13 @@ class CopyTrader(Agent):
         self._wakeups = 0
 
     def on_wakeup(self, view, rng):
+        """Pick a leader only every few wakeups (re-selecting each time would churn the position) and mirror its direction."""
         if not view.can_see(Transparency.FULL):
             return []
         accounts = {a.public_id: a for a in view.accounts() if a.active}
         self._wakeups += 1
         if self.leader not in accounts or self._wakeups % self.reselect_every == 1:
-            candidates = [
-                a
-                for a in accounts.values()
-                if a.notional >= self.min_notional and a.leverage >= self.min_leader_leverage and a.total_pnl > 0
-            ]
+            candidates = [a for a in accounts.values() if a.notional >= self.min_notional and a.leverage >= self.min_leader_leverage and a.total_pnl > 0]
             self.leader = max(candidates, key=lambda a: a.total_pnl).public_id if candidates else None
         cap = capacity(view, self.leverage)
         leader = accounts.get(self.leader) if self.leader else None
@@ -616,8 +638,9 @@ class FlowFollower(Agent):
         self.clip_fraction = float(clip_fraction)
         self.following: Optional[str] = None
 
-    def net_flows(self, view: MarketView) -> Dict[str, int]:
-        flows: Dict[str, int] = {}
+    def net_flows(self, view: MarketView) -> dict[str, int]:
+        """Net contracts bought per visible account over the window; the agent's own trades are excluded."""
+        flows: dict[str, int] = {}
         start = view.time - self.window
         for trade in view.recent_trades(10_000):
             if trade.time < start or trade.buyer is None:
@@ -628,6 +651,7 @@ class FlowFollower(Agent):
         return flows
 
     def on_wakeup(self, view, rng):
+        """Follow the strongest one-directional flow when it exceeds the threshold, otherwise go flat."""
         if not view.can_see(Transparency.ATTRIBUTED):
             return []
         flows = self.net_flows(view)
@@ -687,14 +711,14 @@ class LiquidationHunter(Agent):
         self._cooldown_until = 0.0
         self.hunts = 0
 
-    def clusters(self, view: MarketView) -> Dict[int, Tuple[int, Optional[float]]]:
+    def clusters(self, view: MarketView) -> dict[int, tuple[int, Optional[float]]]:
         """``{-1: (forced_contracts, far_price) below mark, +1: (...) above mark}``.
 
         ``far_price`` is the liquidation price furthest from the mark within the
         search window, i.e. where the whole cluster would have been triggered.
         """
         mark = view.mark_price
-        out: Dict[int, Tuple[int, Optional[float]]] = {-1: (0, None), 1: (0, None)}
+        out: dict[int, tuple[int, Optional[float]]] = {-1: (0, None), 1: (0, None)}
         for account in view.accounts():
             price = account.liquidation_price
             if price is None or not account.active or account.position == 0:
@@ -721,6 +745,7 @@ class LiquidationHunter(Agent):
         return None
 
     def on_wakeup(self, view, rng):
+        """Hunt only from flat and after the cooldown, and only when the forced flow outweighs the cost of pushing the price there."""
         if not view.can_see(Transparency.FULL):
             return []
         now = view.time
@@ -732,7 +757,7 @@ class LiquidationHunter(Agent):
                 return []
             if now - self._started > self.max_hold:
                 clip = max(1, int(capacity(view, self.leverage) * self.exit_clip_fraction))
-                actions: List[Action] = [CancelAll()]
+                actions: list[Action] = [CancelAll()]
                 actions.extend(move_toward(view, 0, clip, tag="hunt_exit"))
                 if position == 0:
                     self.hunting = False
@@ -745,7 +770,7 @@ class LiquidationHunter(Agent):
         if now < self._cooldown_until:
             return []
         cap = capacity(view, self.leverage)
-        best: Optional[Tuple[float, int, int, float]] = None
+        best: Optional[tuple[float, int, int, float]] = None
         for direction, (forced, far_price) in self.clusters(view).items():
             if far_price is None or forced < self.min_forced:
                 continue

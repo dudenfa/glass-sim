@@ -1,5 +1,4 @@
 import json
-import threading
 import urllib.request
 
 from glass_sim.live import FuturesViewer, LiveSession
@@ -34,7 +33,9 @@ def test_viewer_serves_page_and_api():
         assert urllib.request.urlopen(viewer.url + "/static/app.js").status == 200
         state = json.loads(urllib.request.urlopen(viewer.url + "/api/state").read())
         assert "prices" in state and "accounts" in state
-        request = urllib.request.Request(viewer.url + "/api/control", data=json.dumps({"action": "step", "seconds": 5}).encode(), method="POST", headers={"Content-Type": "application/json"})
+        request = urllib.request.Request(
+            viewer.url + "/api/control", data=json.dumps({"action": "step", "seconds": 5}).encode(), method="POST", headers={"Content-Type": "application/json"}
+        )
         assert json.loads(urllib.request.urlopen(request).read())["ok"]
     finally:
         viewer.stop()

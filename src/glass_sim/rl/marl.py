@@ -32,9 +32,10 @@ import csv
 import json
 import multiprocessing as mp
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Optional
 
 import numpy as np
 
@@ -50,11 +51,13 @@ from .reward import RewardConfig, RewardTracker
 
 @dataclass(frozen=True)
 class MultiAgentConfig:
+    """The market, the learners and their interfaces: everything a worker needs to rebuild its environment."""
+
     scenario: str = "default"
     transparency: Optional[str] = None
     n_learners: int = 3
     episode_duration: float = 4 * 3600.0
-    train_seeds: Tuple[int, ...] = tuple(range(2000, 3000))
+    train_seeds: tuple[int, ...] = tuple(range(2000, 3000))
     collateral: float = 100_000.0
     wake_interval: float = 5.0
     prefix: str = "marl"
@@ -62,10 +65,12 @@ class MultiAgentConfig:
     actions: ActionConfig = field(default_factory=ActionConfig)
     reward: RewardConfig = field(default_factory=RewardConfig)
 
-    def learner_ids(self) -> List[str]:
+    def learner_ids(self) -> list[str]:
+        """Stable ids (``marl_01``, ...) used as agent ids, checkpoint names and log columns."""
         return [f"{self.prefix}_{i + 1:02d}" for i in range(self.n_learners)]
 
     def market_config(self, seed: int, duration: Optional[float] = None):
+        """The scenario plus ``n_learners`` external agents of equal capital, so learners differ only by what they learn."""
         config = scenarios.get(self.scenario, seed=seed, duration=float(duration or self.episode_duration))
         if self.transparency:
             config = replace(config, transparency=Transparency(self.transparency))
@@ -94,31 +99,35 @@ class MultiAgentMarket:
         self.encoder = ObservationEncoder(config.observation)
         self.actions = ActionSpace(config.actions)
         self.market: Optional[PerpetualMarket] = None
-        self.trackers: Dict[str, RewardTracker] = {}
-        self.open: Dict[str, bool] = {}
+        self.trackers: dict[str, RewardTracker] = {}
+        self.open: dict[str, bool] = {}
 
     def _advance(self) -> Optional[str]:
+        """Run until some learner must decide; returns its id, or ``None`` at the end."""
         market = self.market
         while market.pending_decision is None and not market.finished:
             market.step()
         return market.pending_decision
 
-    def reset(self, seed: int) -> Dict[str, Any]:
+    def reset(self, seed: int) -> dict[str, Any]:
+        """Start an episode on ``seed`` and return the first decision request."""
         self.market = PerpetualMarket(self.config.market_config(seed))
         self.trackers = {agent_id: RewardTracker(self.market, agent_id, self.config.reward) for agent_id in self.ids}
         self.open = {agent_id: False for agent_id in self.ids}
         return self._next_request(closed=[])
 
-    def _observe(self, agent_id: str) -> Tuple[np.ndarray, np.ndarray]:
+    def _observe(self, agent_id: str) -> tuple[np.ndarray, np.ndarray]:
+        """Observation and action mask for ``agent_id`` at its pending decision."""
         view = self.market.view(agent_id)
         return self.encoder.encode(view), self.actions.mask(view)
 
-    def _close(self, agent_id: str, terminal: bool) -> Tuple[str, float, bool, Dict[str, float]]:
+    def _close(self, agent_id: str, terminal: bool) -> tuple[str, float, bool, dict[str, float]]:
+        """Finish the open transition of ``agent_id``: its reward is known now."""
         reward, info = self.trackers[agent_id].step()
         self.open[agent_id] = False
         return agent_id, float(reward), terminal, info
 
-    def _next_request(self, closed: List[Tuple[str, float, bool, Dict[str, float]]]) -> Dict[str, Any]:
+    def _next_request(self, closed: list[tuple[str, float, bool, dict[str, float]]]) -> dict[str, Any]:
         """Advance to the next learner decision; return it plus any transitions that ended meanwhile."""
         while True:
             agent_id = self._advance()
@@ -139,7 +148,8 @@ class MultiAgentMarket:
             obs, mask = self._observe(agent_id)
             return {"done": False, "agent": agent_id, "obs": obs, "mask": mask, "closed": closed}
 
-    def step(self, agent_id: str, action: int) -> Dict[str, Any]:
+    def step(self, agent_id: str, action: int) -> dict[str, Any]:
+        """Apply one learner's action and advance to the next decision of any learner."""
         view = self.market.view(agent_id)
         mask = self.actions.mask(view)
         orders = self.actions.decode(action, view) if mask[action] else []
@@ -147,12 +157,16 @@ class MultiAgentMarket:
         self.open[agent_id] = True
         return self._next_request(closed=[])
 
-    def _episode_stats(self) -> Dict[str, float]:
+    def _episode_stats(self) -> dict[str, float]:
+        """Final return in percent per learner, for the episode log."""
         mark = self.market.mark_price
-        return {agent_id: 100.0 * (self.market.accounts[agent_id].equity(mark) / self.market.accounts[agent_id].initial_collateral - 1.0) for agent_id in self.ids}
+        return {
+            agent_id: 100.0 * (self.market.accounts[agent_id].equity(mark) / self.market.accounts[agent_id].initial_collateral - 1.0) for agent_id in self.ids
+        }
 
 
 def _worker(remote, config: MultiAgentConfig, seeds: Sequence[int]) -> None:
+    """Worker process: owns one market and answers ``reset`` / ``step`` requests over the pipe."""
     env = MultiAgentMarket(config)
     episode = 0
     try:
@@ -179,6 +193,8 @@ def _worker(remote, config: MultiAgentConfig, seeds: Sequence[int]) -> None:
 
 @dataclass
 class _Pending:
+    """A decision whose reward is not known yet."""
+
     obs: np.ndarray
     mask: np.ndarray
     action: int
@@ -188,6 +204,8 @@ class _Pending:
 
 @dataclass
 class _Transition:
+    """A completed decision; ``next_value`` bootstraps the advantage once the next decision has been evaluated."""
+
     obs: np.ndarray
     mask: np.ndarray
     action: int
@@ -208,16 +226,18 @@ class Learner:
         self.policy = model.policy
         self.gamma = gamma
         self.gae_lambda = gae_lambda
-        self.pending: Dict[int, _Pending] = {}
-        self.streams: Dict[int, List[_Transition]] = {w: [] for w in range(n_workers)}
-        self.episode_returns: List[float] = []
-        self._running: Dict[int, float] = {}
+        self.pending: dict[int, _Pending] = {}
+        self.streams: dict[int, list[_Transition]] = {w: [] for w in range(n_workers)}
+        self.episode_returns: list[float] = []
+        self._running: dict[int, float] = {}
         self.action_counts = np.zeros(len(ACTION_NAMES), dtype=np.int64)
 
     def size(self) -> int:
+        """Transitions buffered since the last update, across all workers."""
         return sum(len(s) for s in self.streams.values())
 
     def record_close(self, worker: int, reward: float, terminal: bool) -> None:
+        """Turn the pending decision on ``worker`` into a transition now that its reward is known."""
         pending = self.pending.pop(worker, None)
         if pending is None:
             return
@@ -232,11 +252,21 @@ class Learner:
             stream[-1].has_next = True
 
     def end_episode(self, worker: int) -> None:
+        """Close the running return of ``worker``; returns are tracked per worker because episodes end at different times."""
         self.episode_returns.append(self._running.pop(worker, 0.0))
 
-    def batch(self) -> Dict[str, np.ndarray]:
+    def batch(self) -> dict[str, np.ndarray]:
+        """Advantages (GAE) and returns, computed separately per worker stream.
+
+        Streams are kept apart because transitions of different workers
+        interleave in wall-clock order but are causally unrelated: a transition
+        may only bootstrap from the next transition of its own stream. When an
+        update cuts a stream before its next decision arrived, the last
+        transition bootstraps from its own value estimate instead of being
+        dropped.
+        """
         obs, masks, actions, log_probs, values, advantages, returns = [], [], [], [], [], [], []
-        for worker, stream in self.streams.items():
+        for stream in self.streams.values():
             adv = 0.0
             stream_adv = [0.0] * len(stream)
             for t in reversed(range(len(stream))):
@@ -247,7 +277,7 @@ class Learner:
                 continues = t + 1 < len(stream) and tr.has_next and not tr.terminal
                 adv = delta + (self.gamma * self.gae_lambda * not_terminal * adv if continues else 0.0)
                 stream_adv[t] = adv
-            for tr, a in zip(stream, stream_adv):
+            for tr, a in zip(stream, stream_adv, strict=True):
                 obs.append(tr.obs)
                 masks.append(tr.mask)
                 actions.append(tr.action)
@@ -270,7 +300,14 @@ class Learner:
         }
 
 
-def ppo_update(policy, data: Dict[str, np.ndarray], epochs: int, batch_size: int, clip: float, ent_coef: float, vf_coef: float, max_grad_norm: float) -> Dict[str, float]:
+def ppo_update(
+    policy, data: dict[str, np.ndarray], epochs: int, batch_size: int, clip: float, ent_coef: float, vf_coef: float, max_grad_norm: float
+) -> dict[str, float]:
+    """One clipped-PPO update of ``policy`` on ``data``; returns mean losses, entropy and approximate KL.
+
+    Written out instead of calling ``MaskablePPO.learn`` because the
+    experience comes from the custom multi-agent loop, not from a Gym rollout.
+    """
     import torch
 
     device = policy.device
@@ -286,7 +323,7 @@ def ppo_update(policy, data: Dict[str, np.ndarray], epochs: int, batch_size: int
     for _ in range(epochs):
         order = np.random.permutation(n)
         for start in range(0, n, batch_size):
-            chunk = order[start:start + batch_size]
+            chunk = order[start : start + batch_size]
             if len(chunk) < 2:
                 continue
             idx = torch.as_tensor(chunk, device=device)
@@ -316,7 +353,8 @@ def ppo_update(policy, data: Dict[str, np.ndarray], epochs: int, batch_size: int
     return {k: v / max(1, updates) for k, v in stats.items()}
 
 
-def _make_model(obs_size: int, n_actions: int, net_arch: List[int], learning_rate: float, seed: int):
+def _make_model(obs_size: int, n_actions: int, net_arch: list[int], learning_rate: float, seed: int):
+    """A ``MaskablePPO`` over a dummy env that only defines the spaces; the real experience comes from the workers."""
     import gymnasium as gym
     from sb3_contrib import MaskablePPO
 
@@ -359,16 +397,20 @@ def train_marl(
     net_arch: Sequence[int] = (128, 128),
     shared_policy: bool = False,
     seed: int = 0,
-    out_root: str = "checkpoints/glass",
+    out_root: str = "checkpoints",
     init_from: Optional[str] = None,
 ) -> Path:
+    """Train ``n_learners`` policies together in ``n_workers`` parallel markets; returns the run directory.
+
+    Policies live only in the main process, so workers never import torch and
+    the whole run is reproducible for a seed.
+    """
     import torch
 
     out = Path(out_root) / name
     out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(seed)
     np.random.seed(seed)
-    rng = np.random.default_rng(seed)
     ids = config.learner_ids()
     encoder = ObservationEncoder(config.observation)
     n_actions = len(ACTION_NAMES)
@@ -395,7 +437,17 @@ def train_marl(
         "timesteps_per_learner": timesteps_per_learner,
         "n_workers": n_workers,
         "rollout_per_learner": rollout_per_learner,
-        "ppo": {"epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "gamma": gamma, "gae_lambda": gae_lambda, "clip": clip, "ent_coef": ent_coef, "vf_coef": vf_coef, "net_arch": list(net_arch)},
+        "ppo": {
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "learning_rate": learning_rate,
+            "gamma": gamma,
+            "gae_lambda": gae_lambda,
+            "clip": clip,
+            "ent_coef": ent_coef,
+            "vf_coef": vf_coef,
+            "net_arch": list(net_arch),
+        },
         "seed": seed,
         "init_from": init_from,
         "env": asdict(config),
@@ -418,7 +470,10 @@ def train_marl(
 
     log_handle = (out / "training_log.csv").open("w", newline="")
     log = csv.writer(log_handle)
-    log.writerow(["seconds", "decisions", "learner", "update", "mean_episode_return_last10", "policy_loss", "value_loss", "entropy", "approx_kl"] + [f"act_{n}" for n in ACTION_NAMES])
+    log.writerow(
+        ["seconds", "decisions", "learner", "update", "mean_episode_return_last10", "policy_loss", "value_loss", "entropy", "approx_kl"]
+        + [f"act_{n}" for n in ACTION_NAMES]
+    )
     episodes_csv = (out / "episodes.csv").open("w", newline="")
     episodes_log = csv.writer(episodes_csv)
     episodes_log.writerow(["seconds", "worker", "seed"] + [f"{agent_id}_pnl_pct" for agent_id in ids])
@@ -432,6 +487,7 @@ def train_marl(
     worker_seed = [r.get("seed") for r in requests]
 
     def handle_closed(w: int, closed) -> None:
+        """Hand every closed transition of worker ``w`` to its learner."""
         for agent_id, reward, terminal, _info in closed:
             learners[agent_id].record_close(w, reward, terminal)
 
@@ -455,10 +511,10 @@ def train_marl(
                     worker_seed[w] = requests[w].get("seed")
                     handle_closed(w, requests[w]["closed"])
             # 3. Batch the pending decisions by learner.
-            by_learner: Dict[str, List[int]] = {}
+            by_learner: dict[str, list[int]] = {}
             for w, req in enumerate(requests):
                 by_learner.setdefault(req["agent"], []).append(w)
-            chosen: Dict[int, int] = {}
+            chosen: dict[int, int] = {}
             for agent_id, workers in by_learner.items():
                 learner = learners[agent_id]
                 obs = np.stack([requests[w]["obs"] for w in workers])
@@ -517,14 +573,27 @@ def train_marl(
         learner_dir = out / agent_id
         learner_dir.mkdir(exist_ok=True)
         models[agent_id].save(str(learner_dir / "model.zip"))
-        (learner_dir / "config.json").write_text(json.dumps({"env": {"observation": asdict(config.observation), "actions": asdict(config.actions), "collateral": config.collateral, "wake_interval": config.wake_interval}}, indent=2))
+        (learner_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "env": {
+                        "observation": asdict(config.observation),
+                        "actions": asdict(config.actions),
+                        "collateral": config.collateral,
+                        "wake_interval": config.wake_interval,
+                    }
+                },
+                indent=2,
+            )
+        )
     record["training_seconds"] = round(time.perf_counter() - started, 1)
     record["decisions"] = decisions
     (out / "config.json").write_text(json.dumps(record, indent=2, default=str))
     return out
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
+    """Command-line entry point (``python -m glass_sim.rl.marl``)."""
     parser = argparse.ArgumentParser(description="Train several learning agents together (IPPO) in the futures market")
     parser.add_argument("--name", required=True)
     parser.add_argument("--learners", type=int, default=3)
@@ -541,7 +610,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--net-arch", default="128,128")
     parser.add_argument("--shared-policy", action="store_true")
     parser.add_argument("--rollout", type=int, default=8192, help="transitions per learner between updates")
-    parser.add_argument("--out-root", default="checkpoints/glass")
+    parser.add_argument("--out-root", default="checkpoints")
     parser.add_argument("--init-from", default=None, help="run directory whose marl_XX.zip learners are trained further")
     args = parser.parse_args(argv)
     from .train import _parse_seeds

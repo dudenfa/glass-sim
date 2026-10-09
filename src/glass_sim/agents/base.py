@@ -25,7 +25,8 @@ one agent never changes another agent's random choices.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, List, Optional, Sequence
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
@@ -53,30 +54,31 @@ class Agent:
     # --------------------------------------------------------------- clock
 
     def next_wakeup_delay(self, rng: np.random.Generator) -> float:
+        """Seconds until the next wakeup: exponential by default (a Poisson clock); override for other schedules."""
         return float(rng.exponential(self.wake_interval))
 
     # ------------------------------------------------------------- hooks
 
-    def on_start(self, view: "MarketView", rng: np.random.Generator) -> Sequence[Action]:
+    def on_start(self, view: MarketView, rng: np.random.Generator) -> Sequence[Action]:
         """Called once at time 0, before any wakeup. Return initial actions."""
         return ()
 
-    def on_wakeup(self, view: "MarketView", rng: np.random.Generator) -> Sequence[Action]:
+    def on_wakeup(self, view: MarketView, rng: np.random.Generator) -> Sequence[Action]:
         """Main decision point. Return the actions to send to the exchange."""
         return ()
 
-    def on_fill(self, fill: Fill, view: "MarketView") -> None:
+    def on_fill(self, fill: Fill, view: MarketView) -> None:
         """Called when one of the agent's orders trades. No actions allowed here."""
 
-    def on_signal(self, signal: "PrivateSignal", view: "MarketView", rng: np.random.Generator) -> Sequence[Action]:
+    def on_signal(self, signal: PrivateSignal, view: MarketView, rng: np.random.Generator) -> Sequence[Action]:
         """Called when a private signal arrives (only for subscribed agents)."""
         return ()
 
-    def on_news(self, news: "NewsItem", view: "MarketView", rng: np.random.Generator) -> Sequence[Action]:
+    def on_news(self, news: NewsItem, view: MarketView, rng: np.random.Generator) -> Sequence[Action]:
         """Called when public news is released."""
         return ()
 
-    def on_liquidation(self, view: "MarketView") -> None:
+    def on_liquidation(self, view: MarketView) -> None:
         """Called after the agent's position was liquidated."""
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -95,17 +97,19 @@ class ExternalAgent(Agent):
     agent_type = "external"
     default_prefix = "ext"
 
-    def __init__(self, wake_interval: float = 5.0, policy: Optional[Callable[["MarketView"], Sequence[Action]]] = None) -> None:
+    def __init__(self, wake_interval: float = 5.0, policy: Optional[Callable[[MarketView], Sequence[Action]]] = None) -> None:
         super().__init__(wake_interval=wake_interval)
         self.policy = policy
 
-    def on_wakeup(self, view: "MarketView", rng: np.random.Generator) -> Sequence[Action]:
+    def on_wakeup(self, view: MarketView, rng: np.random.Generator) -> Sequence[Action]:
+        """Run the inline policy; without one the market must be driven through ``PerpetualMarket.act``."""
         if self.policy is None:
             raise RuntimeError("ExternalAgent without policy is driven by PerpetualMarket.act")
         return list(self.policy(view))
 
 
-def actions_list(actions: Optional[Sequence[Action]]) -> List[Action]:
+def actions_list(actions: Optional[Sequence[Action]]) -> list[Action]:
+    """Normalize an agent's return value (``None``, tuple or list) to a list."""
     if not actions:
         return []
     return list(actions)

@@ -1,5 +1,3 @@
-import math
-
 import pytest
 
 from glass_sim.account import MarginAccount

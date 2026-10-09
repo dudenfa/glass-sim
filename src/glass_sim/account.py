@@ -34,6 +34,8 @@ from .types import Side
 
 @dataclass
 class AccountSnapshot:
+    """Immutable copy of an account's state and statistics at one mark price."""
+
     agent_id: str
     public_id: str
     agent_type: str
@@ -73,6 +75,8 @@ class AccountSnapshot:
 
 
 class MarginAccount:
+    """Mutable cross-margin account; uses ``__slots__`` because every fill and valuation touches it."""
+
     __slots__ = (
         "agent_id",
         "public_id",
@@ -153,32 +157,40 @@ class MarginAccount:
     # ----------------------------------------------------------------- values
 
     def unrealized_pnl(self, mark: float) -> float:
+        """Position PnL at ``mark`` (0 when flat)."""
         if self.position == 0:
             return 0.0
         return self.position * (mark - self.entry_price) * self.contract_size
 
     def equity(self, mark: float) -> float:
+        """Collateral plus unrealized PnL."""
         return self.collateral + self.unrealized_pnl(mark)
 
     def notional(self, mark: float) -> float:
+        """Absolute position value at ``mark``."""
         return abs(self.position) * mark * self.contract_size
 
     def leverage(self, mark: float) -> float:
+        """Notional over equity (infinite once equity is gone)."""
         equity = self.equity(mark)
         if equity <= 0:
             return float("inf") if self.position else 0.0
         return self.notional(mark) / equity
 
     def worst_case_position(self, extra_buy: int = 0, extra_sell: int = 0) -> int:
+        """Largest absolute position reachable if all resting orders on one side filled (plus any extra order)."""
         return max(abs(self.position + self.open_buy_qty + extra_buy), abs(self.position - self.open_sell_qty - extra_sell))
 
     def initial_margin(self, mark: float, imr: float, extra_buy: int = 0, extra_sell: int = 0) -> float:
+        """Margin required for the worst-case position."""
         return imr * self.worst_case_position(extra_buy, extra_sell) * mark * self.contract_size
 
     def maintenance_margin(self, mark: float, mmr: float) -> float:
+        """Margin below which the current position is liquidated."""
         return mmr * abs(self.position) * mark * self.contract_size
 
     def available_margin(self, mark: float, imr: float) -> float:
+        """Equity left after the initial-margin requirement."""
         return self.equity(mark) - self.initial_margin(mark, imr)
 
     def liquidation_price(self, mmr: float) -> Optional[float]:
@@ -250,6 +262,7 @@ class MarginAccount:
         self.collateral -= payment
 
     def reserve_order(self, side: Side, quantity: int) -> None:
+        """Count a resting order toward worst-case margin, so many small orders cannot over-commit the account."""
         if side is Side.BUY:
             self.open_buy_qty += quantity
         else:
@@ -257,6 +270,7 @@ class MarginAccount:
         self.open_orders += 1
 
     def reduce_reservation(self, side: Side, quantity: int, closes_order: bool) -> None:
+        """Release reserved quantity after a fill or a cancel."""
         if side is Side.BUY:
             self.open_buy_qty = max(0, self.open_buy_qty - quantity)
         else:
@@ -265,6 +279,7 @@ class MarginAccount:
             self.open_orders = max(0, self.open_orders - 1)
 
     def snapshot(self, mark: float, mmr: float) -> AccountSnapshot:
+        """Freeze the account for results and the viewer."""
         equity = self.equity(mark)
         total_pnl = equity - self.initial_collateral
         return AccountSnapshot(

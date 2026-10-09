@@ -1,7 +1,7 @@
 """Evaluate several agents trading together, on held-out seeds.
 
-    python -m glass_sim.rl.marl_evaluate checkpoints/glass/marl3_s0 \\
-        --single checkpoints/glass/ppo_full_v2 --seeds 31-40
+    python -m glass_sim.rl.marl_evaluate checkpoints/marl3_s0 \\
+        --single checkpoints/ppo_full_v2 --seeds 31-40
 
 Each treatment adds the same number N of extra participants (same capital and
 decision rate) to the same market, so the treatments are directly comparable:
@@ -23,7 +23,7 @@ import json
 import statistics
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Optional
 
 from .. import scenarios
 from ..agents import MarketMaker
@@ -35,6 +35,7 @@ from .policy import policy_agent_from_checkpoint
 
 
 def _agents_for(treatment: str, n: int, marl_dir: Optional[Path], single_model: Optional[Path], wake: float):
+    """The ``n`` extra participants of a treatment, all named ``x_01``... so reports line up across treatments."""
     agents = []
     for i in range(n):
         if treatment == "marl":
@@ -51,7 +52,19 @@ def _agents_for(treatment: str, n: int, marl_dir: Optional[Path], single_model: 
     return agents
 
 
-def run(treatment: str, seed: int, n: int, duration: float, scenario: str, transparency: Optional[str], marl_dir: Optional[Path], single_model: Optional[Path], collateral: float, wake: float) -> Dict[str, Any]:
+def run(
+    treatment: str,
+    seed: int,
+    n: int,
+    duration: float,
+    scenario: str,
+    transparency: Optional[str],
+    marl_dir: Optional[Path],
+    single_model: Optional[Path],
+    collateral: float,
+    wake: float,
+) -> dict[str, Any]:
+    """One treatment on one seed: per-agent, coalition, participant-type and market metrics."""
     config = scenarios.get(scenario, seed=seed, duration=duration)
     if transparency:
         config = replace(config, transparency=Transparency(transparency))
@@ -61,7 +74,7 @@ def run(treatment: str, seed: int, n: int, duration: float, scenario: str, trans
         market.add_agent(agent, collateral)
     result = market.run()
     summary = result.summary()
-    row: Dict[str, Any] = {
+    row: dict[str, Any] = {
         "seed": seed,
         "treatment": treatment,
         "market": {k: summary.get(k) for k in MARKET_KEYS},
@@ -89,11 +102,13 @@ def run(treatment: str, seed: int, n: int, duration: float, scenario: str, trans
 
 
 def _med(values):
+    """Median ignoring ``None``."""
     values = [v for v in values if v is not None]
     return statistics.median(values) if values else None
 
 
-def format_report(report: Dict[str, Any]) -> str:
+def format_report(report: dict[str, Any]) -> str:
+    """Text report of a multi-agent evaluation."""
     rows = report["rows"]
     seeds = report["seeds"]
     treatments = list(dict.fromkeys(r["treatment"] for r in rows))
@@ -112,12 +127,14 @@ def format_report(report: Dict[str, Any]) -> str:
         lines.append("")
         lines.append("Paired coalition differences (percentage points)")
         for i, a in enumerate(active):
-            for b in active[i + 1:]:
+            for b in active[i + 1 :]:
                 d = [by[(a, s)]["coalition_return_pct"] - by[(b, s)]["coalition_return_pct"] for s in seeds]
                 lines.append(f"  {a} - {b}: median {statistics.median(d):+.2f}, {a} better in {sum(x > 0 for x in d)}/{len(d)}")
     lines.append("")
     lines.append("Per agent (median over seeds)")
-    lines.append(f"  {'treatment':14s} {'agent':6s} {'return %':>9s} {'maxDD%':>7s} {'maker%':>7s} {'long':>5s} {'short':>5s} {'|pos|':>6s} {'edge':>6s} {'mk60':>6s}  top actions")
+    lines.append(
+        f"  {'treatment':14s} {'agent':6s} {'return %':>9s} {'maxDD%':>7s} {'maker%':>7s} {'long':>5s} {'short':>5s} {'|pos|':>6s} {'edge':>6s} {'mk60':>6s}  top actions"
+    )
     for t in active:
         for agent_id in sorted(by[(t, seeds[0])]["agents"]):
             infos = [by[(t, s)]["agents"][agent_id] for s in seeds]
@@ -148,7 +165,8 @@ def format_report(report: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
+    """Command-line entry point (``python -m glass_sim.rl.marl_evaluate``)."""
     parser = argparse.ArgumentParser(description="Evaluate several agents trading together")
     parser.add_argument("marl_dir", nargs="?", default=None, help="run directory from marl.py (omit to skip the marl treatment)")
     parser.add_argument("--single", default=None, help="single-agent run directory or model.zip for single_copies")
@@ -181,10 +199,22 @@ def main(argv: Optional[List[str]] = None) -> int:
             rows.append(run(t, seed, args.n, duration, args.scenario, args.transparency, marl_dir, single, args.collateral, args.wake))
             coalition = rows[-1].get("coalition_return_pct")
             print(f"  seed {seed} {t:14s}" + (f" coalition {coalition:+.2f}%" if coalition is not None else ""), flush=True)
-    report = {"n": args.n, "seeds": seeds, "duration": duration, "transparency": args.transparency or "scenario default", "marl_dir": str(marl_dir), "single_model": str(single), "rows": rows}
+    report = {
+        "n": args.n,
+        "seeds": seeds,
+        "duration": duration,
+        "transparency": args.transparency or "scenario default",
+        "marl_dir": str(marl_dir),
+        "single_model": str(single),
+        "rows": rows,
+    }
     text = format_report(report)
     print("\n" + text)
-    out = Path(args.out) if args.out else (marl_dir / f"eval_{args.seeds}_{args.transparency or 'default'}" if marl_dir else Path("artifacts/glass") / f"multi_eval_{args.seeds}")
+    out = (
+        Path(args.out)
+        if args.out
+        else (marl_dir / f"eval_{args.seeds}_{args.transparency or 'default'}" if marl_dir else Path("artifacts") / f"multi_eval_{args.seeds}")
+    )
     out.mkdir(parents=True, exist_ok=True)
     (out / "report.txt").write_text(text + "\n")
     (out / "results.json").write_text(json.dumps(report, indent=2, default=str))

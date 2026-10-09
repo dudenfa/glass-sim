@@ -34,13 +34,13 @@ from glass_sim import PerpetualMarket, scenarios
 
 result = PerpetualMarket(scenarios.default(seed=1)).run()
 result.print_report()
-frames = result.to_frames()      # pandas DataFrames: bars, trades, liquidations, funding, equity, ...
+frames = result.to_frames()  # pandas DataFrames: bars, trades, liquidations, funding, equity, ...
 ```
 
 The reference scenario simulates 4 hours with 88 agents (about 130,000
 events) in roughly 5 seconds on a laptop.
 
-Runnable examples live in [`examples/glass/`](../../examples/glass).
+Runnable examples live in [`examples/`](../examples).
 
 ## Concepts
 
@@ -149,6 +149,7 @@ of its size 20 to 90 seconds before it becomes public.
 ```python
 from glass_sim import Agent, MarketOrder, Side
 
+
 class Contrarian(Agent):
     agent_type = "contrarian"
     default_prefix = "contra"
@@ -158,7 +159,7 @@ class Contrarian(Agent):
         self.size = size
 
     def on_wakeup(self, view, rng):
-        prices = view.price_history(60)            # last 60 seconds, one sample per second
+        prices = view.price_history(60)  # last 60 seconds, one sample per second
         if len(prices) < 60:
             return []
         side = Side.SELL if prices[-1] > prices[0] else Side.BUY
@@ -254,12 +255,12 @@ All config objects are frozen dataclasses: derive variants with
 - `save(directory)`: `report.txt` (full text report), JSON summaries and CSV
   time series. `SavedRun.load(directory)` reads a saved run back.
 
-Every field is explained in [METRICS.md](METRICS.md).
+Every field is explained in [metrics.md](metrics.md).
 
 From the command line:
 
 ```bash
-glass run --scenario volatile --seed 3 --duration 2h --agents --out artifacts/glass/volatile_s3
+glass run --scenario volatile --seed 3 --duration 2h --agents --out artifacts/volatile_s3
 ```
 
 ### Comparing runs
@@ -267,7 +268,7 @@ glass run --scenario volatile --seed 3 --duration 2h --agents --out artifacts/gl
 ```bash
 # two single runs (run specs or saved directories)
 glass compare "scenario=default seed=1" "scenario=default seed=1 transparency=anonymous"
-glass compare artifacts/glass/run_a artifacts/glass/run_b --agents
+glass compare artifacts/run_a artifacts/run_b --agents
 
 # two setups over a paired seed panel: medians, paired differences, win counts
 glass compare "scenario=default" "scenario=anonymous" --seeds 1-10 --out comparison.txt
@@ -312,7 +313,8 @@ for seed in range(1, 11):
         ...
 ```
 
-See [`examples/glass/03_transparency_experiment.py`](../../examples/glass/03_transparency_experiment.py).
+See [`examples/03_transparency_experiment.py`](../examples/03_transparency_experiment.py).
+The full reproduction pipeline is described in [`experiments/README.md`](../experiments/README.md).
 
 For controlled interventions, `market.shock_index(log_jump)` applies an
 exogenous jump at the current time, and `market.execute(agent_id, actions)`
@@ -328,8 +330,8 @@ from glass_sim import AgentSpec, ExternalAgent
 spec = AgentSpec(ExternalAgent, collateral=50_000, params={"wake_interval": 5.0}, external=True, prefix="rl")
 market = PerpetualMarket(replace(base, agents=base.agents + (spec,)))
 while (agent_id := market.run_until_decision()) is not None:
-    view = market.view(agent_id)           # observation
-    market.act(agent_id, policy(view))     # action; reward from view.me.equity changes
+    view = market.view(agent_id)  # observation
+    market.act(agent_id, policy(view))  # action; reward from view.me.equity changes
 ```
 
 Several external agents can be present; the market pauses at each one's
@@ -343,7 +345,7 @@ from glass_sim.rl import EnvConfig, PerpTradingEnv
 env = PerpTradingEnv(EnvConfig(scenario="default", collateral=100_000, wake_interval=5.0))
 obs, info = env.reset()
 obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
-mask = env.action_masks()                  # for sb3_contrib.MaskablePPO
+mask = env.action_masks()  # for sb3_contrib.MaskablePPO
 ```
 
 - **Observation**: 32 scaled numbers: market state (spread, mid/mark vs index,
@@ -364,8 +366,8 @@ Command line:
 
 ```bash
 glass train --name my_agent --timesteps 1000000 --train-seeds 1000-1999 --episode-duration 4h
-glass evaluate checkpoints/glass/my_agent --seeds 31-40      # model vs random vs hold vs no agent
-glass serve --rl checkpoints/glass/my_agent                  # watch it trade
+glass evaluate checkpoints/my_agent --seeds 31-40      # model vs random vs hold vs no agent
+glass serve --rl checkpoints/my_agent                  # watch it trade
 ```
 
 Run `glass train --help` for all options (transparency, capital, wake rate,
@@ -381,7 +383,7 @@ and fail on unseen seeds.
 # observation with the last 20 trades and the 10 largest accounts (362 inputs)
 glass train --name my_tables_agent --trades-table 20 --accounts-table 10 --net-arch 256,256
 # continue training an existing agent on new worlds
-glass train --name my_agent_more --init-from checkpoints/glass/my_agent/model.zip --train-seeds 3000-3999
+glass train --name my_agent_more --init-from checkpoints/my_agent/model.zip --train-seeds 3000-3999
 ```
 
 Who traded is described by observable properties (recent net flow, leverage,
@@ -395,8 +397,8 @@ experience and exit-value reward; `--shared-policy` shares one network):
 
 ```bash
 python -m glass_sim.rl.marl --name my_marl --learners 3 --timesteps 600000
-python -m glass_sim.rl.marl --name my_marl_more --init-from checkpoints/glass/my_marl --train-seeds 4000-4999
-python -m glass_sim.rl.marl_evaluate checkpoints/glass/my_marl --single checkpoints/glass/my_agent --seeds 31-40
+python -m glass_sim.rl.marl --name my_marl_more --init-from checkpoints/my_marl --train-seeds 4000-4999
+python -m glass_sim.rl.marl_evaluate checkpoints/my_marl --single checkpoints/my_agent --seeds 31-40
 ```
 
 The evaluation compares the jointly trained learners with copies of a
@@ -407,10 +409,10 @@ fill quality and market quality.
 ### Reproducing the paper outputs
 
 ```bash
-PYTHONPATH=src python scripts/paper/simulator_experiments.py   # scenario sweep, transparency experiment, example session
-scripts/glass_rl_queue.sh                                    # single-agent training runs (A, B, C x 3)
-scripts/glass_followup.sh                                    # evaluations, input analysis, MARL, extended run, figures
-PYTHONPATH=src python scripts/paper/make_figures.py            # paper/figures and paper/tables
+python experiments/paper/simulator_experiments.py   # scenario sweep, transparency experiment, example session
+experiments/train_single_agents.sh                    # single-agent training runs (A, B, C x 3)
+experiments/evaluate_and_marl.sh                      # evaluations, input analysis, MARL, extended run, figures
+python experiments/paper/make_figures.py            # paper/figures and paper/tables
 ```
 
 ## Validation

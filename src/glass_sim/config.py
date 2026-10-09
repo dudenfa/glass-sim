@@ -9,8 +9,9 @@ Time is measured in simulated seconds.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 from .types import Transparency
 
@@ -33,10 +34,12 @@ class ContractSpec:
 
     @property
     def initial_margin_ratio(self) -> float:
+        """One over the maximum leverage."""
         return 1.0 / self.max_leverage
 
     @property
     def mmr(self) -> float:
+        """Maintenance-margin ratio: the explicit value, or half the initial ratio."""
         # Hyperliquid convention: maintenance margin is half the initial margin at max leverage.
         if self.maintenance_margin_ratio is not None:
             return self.maintenance_margin_ratio
@@ -71,7 +74,7 @@ class NewsConfig:
 
     rate_per_hour: float = 2.0
     jump_std: float = 0.006
-    lead_time: Tuple[float, float] = (20.0, 90.0)
+    lead_time: tuple[float, float] = (20.0, 90.0)
     signal_noise: float = 0.35
     enabled: bool = True
 
@@ -118,7 +121,7 @@ class LatencyConfig:
     jitter: float = 0.05
 
 
-CollateralSpec = Union[float, Tuple[float, float]]
+CollateralSpec = Union[float, tuple[float, float]]
 
 
 @dataclass(frozen=True)
@@ -135,8 +138,8 @@ class AgentSpec:
     agent: Callable[..., Any]
     count: int = 1
     collateral: CollateralSpec = 10_000.0
-    params: Dict[str, Any] = field(default_factory=dict)
-    randomize: Tuple[str, ...] = ()
+    params: dict[str, Any] = field(default_factory=dict)
+    randomize: tuple[str, ...] = ()
     prefix: Optional[str] = None
     private_signals: bool = False
     external: bool = False
@@ -144,6 +147,8 @@ class AgentSpec:
 
 @dataclass(frozen=True)
 class MarketConfig:
+    """Everything that defines a session. Frozen so a scenario is a value and variants come from ``dataclasses.replace``."""
+
     contract: ContractSpec = field(default_factory=ContractSpec)
     index: IndexConfig = field(default_factory=IndexConfig)
     news: NewsConfig = field(default_factory=NewsConfig)
@@ -151,7 +156,7 @@ class MarketConfig:
     liquidation: LiquidationConfig = field(default_factory=LiquidationConfig)
     latency: LatencyConfig = field(default_factory=LatencyConfig)
     transparency: Transparency = Transparency.FULL
-    agents: Tuple[AgentSpec, ...] = ()
+    agents: tuple[AgentSpec, ...] = ()
     duration: float = 4 * HOUR
     seed: int = 0
     record_interval: float = 1.0
@@ -159,7 +164,8 @@ class MarketConfig:
     recent_trades_kept: int = 2_000
     name: str = "custom"
 
-    def with_agents(self, *specs: AgentSpec) -> "MarketConfig":
+    def with_agents(self, *specs: AgentSpec) -> MarketConfig:
+        """Copy with a different population."""
         from dataclasses import replace
 
         return replace(self, agents=tuple(specs))
@@ -177,13 +183,14 @@ def parse_duration(value: Union[str, float, int]) -> float:
 
 
 def format_time(seconds: float) -> str:
+    """``HH:MM:SS`` of a simulated time, for the viewer clock."""
     total = int(seconds)
     hours, rest = divmod(total, 3600)
     minutes, secs = divmod(rest, 60)
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
-__all__: List[str] = [
+__all__: list[str] = [
     "AgentSpec",
     "ContractSpec",
     "DAY",

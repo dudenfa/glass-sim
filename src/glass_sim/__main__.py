@@ -3,15 +3,15 @@
 Examples::
 
     python -m glass_sim scenarios
-    python -m glass_sim run --scenario default --seed 1 --duration 4h --out artifacts/glass/default_s1
+    python -m glass_sim run --scenario default --seed 1 --duration 4h --out artifacts/default_s1
     python -m glass_sim serve --scenario default --seed 1 --open
     python -m glass_sim compare "scenario=default seed=1" "scenario=default seed=1 transparency=anonymous"
     python -m glass_sim compare "scenario=default" "scenario=anonymous" --seeds 1-10
-    python -m glass_sim compare artifacts/glass/run_a artifacts/glass/run_b --agents
+    python -m glass_sim compare artifacts/run_a artifacts/run_b --agents
 
     python -m glass_sim train --name ppo_full_v1 --timesteps 500000
-    python -m glass_sim evaluate checkpoints/glass/ppo_full_v1 --seeds 31-40
-    python -m glass_sim serve --rl checkpoints/glass/ppo_full_v1
+    python -m glass_sim evaluate checkpoints/ppo_full_v1 --seeds 31-40
+    python -m glass_sim serve --rl checkpoints/ppo_full_v1
 
 (``glass`` is the same command once the package is installed.)
 """
@@ -23,7 +23,7 @@ import json
 import sys
 import time
 from dataclasses import replace
-from typing import List, Optional
+from typing import Optional
 
 from . import scenarios
 from .config import parse_duration
@@ -32,6 +32,7 @@ from .types import Transparency
 
 
 def _config_from_args(args: argparse.Namespace):
+    """Scenario config from the common CLI options."""
     overrides = {"seed": args.seed}
     if args.duration:
         overrides["duration"] = parse_duration(args.duration)
@@ -42,6 +43,7 @@ def _config_from_args(args: argparse.Namespace):
 
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
+    """Options shared by ``run`` and ``serve``."""
     parser.add_argument("--scenario", default="default", choices=scenarios.names())
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--duration", default=None, help="e.g. 30m, 4h, 1d (default: scenario's own)")
@@ -49,6 +51,7 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    """Run one session and print (optionally save) its report."""
     config = _config_from_args(args)
     started = time.perf_counter()
     result = PerpetualMarket(config, keep_order_events=args.keep_orders).run()
@@ -64,11 +67,14 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
+    """Start the live viewer, optionally with trained RL agents added."""
     from .live import FuturesViewer, LiveSession
 
     duration = parse_duration(args.duration) if args.duration else None
     checkpoints = [str(path if str(path).endswith(".zip") else f"{path}/model.zip") for path in args.rl]
-    session = LiveSession(scenario=args.scenario, seed=args.seed, transparency=args.transparency, speed=args.speed, duration=duration, rl_checkpoints=checkpoints)
+    session = LiveSession(
+        scenario=args.scenario, seed=args.seed, transparency=args.transparency, speed=args.speed, duration=duration, rl_checkpoints=checkpoints
+    )
     session.playing = not args.paused
     viewer = FuturesViewer(session, host=args.host, port=args.port)
     print(f"Futures market viewer on {viewer.url}  (Ctrl+C to stop)")
@@ -80,6 +86,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
+    """Compare two runs, or two setups over a paired seed panel."""
     from .compare import compare_panels, compare_runs, load_or_run, parse_seeds
 
     progress = (lambda message: print(f"  ran {message}", file=sys.stderr)) if args.verbose else None
@@ -95,6 +102,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_scenarios(_args: argparse.Namespace) -> int:
+    """List the scenarios with their size, transparency and duration."""
     for name in scenarios.names():
         config = scenarios.get(name)
         agents = sum(spec.count for spec in config.agents)
@@ -103,7 +111,12 @@ def cmd_scenarios(_args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
+    """Entry point of the ``glass`` command.
+
+    ``train`` and ``evaluate`` are forwarded untouched to their own parsers,
+    so each keeps a single, complete ``--help``.
+    """
     parser = argparse.ArgumentParser(prog="python -m glass_sim", description="Transparent perpetual-futures market simulator")
     sub = parser.add_subparsers(dest="command", required=True)
 

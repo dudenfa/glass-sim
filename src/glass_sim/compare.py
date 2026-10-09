@@ -15,9 +15,10 @@ the paired differences, and in how many seeds the right side was higher.
 from __future__ import annotations
 
 import statistics
-from dataclasses import asdict, replace
+from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Union
 
 from . import scenarios
 from .config import MarketConfig, parse_duration
@@ -32,8 +33,9 @@ RunLike = Union[SimulationResult, SavedRun]
 # ----------------------------------------------------------------- specs
 
 
-def parse_spec(spec: str) -> Dict[str, str]:
-    values: Dict[str, str] = {}
+def parse_spec(spec: str) -> dict[str, str]:
+    """Parse ``"key=value ..."`` into a dict, rejecting unknown keys early."""
+    values: dict[str, str] = {}
     for token in spec.split():
         if "=" not in token:
             raise ValueError(f"expected key=value in run spec, got {token!r}")
@@ -46,8 +48,9 @@ def parse_spec(spec: str) -> Dict[str, str]:
 
 
 def config_from_spec(spec: str, seed: Optional[int] = None) -> MarketConfig:
+    """The ``MarketConfig`` a run spec describes (``seed`` overrides the spec's seed)."""
     values = parse_spec(spec)
-    overrides: Dict[str, Any] = {"seed": int(seed if seed is not None else values.get("seed", 1))}
+    overrides: dict[str, Any] = {"seed": int(seed if seed is not None else values.get("seed", 1))}
     if "duration" in values:
         overrides["duration"] = parse_duration(values["duration"])
     config = scenarios.get(values.get("scenario", "default"), **overrides)
@@ -57,19 +60,22 @@ def config_from_spec(spec: str, seed: Optional[int] = None) -> MarketConfig:
 
 
 def load_or_run(spec: str) -> RunLike:
+    """Load a saved run directory, or simulate a run spec."""
     path = Path(spec)
     if path.is_dir():
         return SavedRun.load(path)
     return PerpetualMarket(config_from_spec(spec)).run()
 
 
-def _parts(run: RunLike) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+def _parts(run: RunLike) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """``(summary, agents, groups)`` for a live or a saved run."""
     if isinstance(run, SavedRun):
         return run.summary, run.agents, run.groups
     return run.summary(), run.agent_table(), run.group_table()
 
 
 def _label(run: RunLike) -> str:
+    """Short identification of a run for report headers."""
     summary = _parts(run)[0]
     return f"{summary.get('scenario')} seed={summary.get('seed')} {summary.get('transparency')}"
 
@@ -78,6 +84,7 @@ def _label(run: RunLike) -> str:
 
 
 def _fmt(value: Any, digits: int = 3) -> str:
+    """Number formatting shared by the comparison tables."""
     if value is None:
         return "—"
     if isinstance(value, bool):
@@ -88,6 +95,7 @@ def _fmt(value: Any, digits: int = 3) -> str:
 
 
 def _delta_row(label: str, left: Any, right: Any, width: int = 32) -> str:
+    """One table row with left, right, delta and percent change when both sides are numeric."""
     if isinstance(left, (int, float)) and isinstance(right, (int, float)) and not isinstance(left, bool):
         delta = right - left
         pct = f"{100.0 * delta / abs(left):+.1f}%" if left else "—"
@@ -96,6 +104,7 @@ def _delta_row(label: str, left: Any, right: Any, width: int = 32) -> str:
 
 
 def compare_runs(left: RunLike, right: RunLike, show_agents: bool = False, top_agents: int = 15) -> str:
+    """Text comparison of two runs: summary sections, returns by type and the agents whose PnL changed most."""
     ls, la, lg = _parts(left)
     rs, ra, rg = _parts(right)
     header = f"  {'':32s} {'left':>14s} {'right':>14s} {'delta':>14s} {'%':>9s}"
@@ -122,7 +131,9 @@ def compare_runs(left: RunLike, right: RunLike, show_agents: bool = False, top_a
     shown = common if show_agents else common[:top_agents]
     title = "Every agent present in both runs" if show_agents else f"Agents with the largest PnL change (top {len(shown)} of {len(common)})"
     lines.append(title)
-    lines.append(f"  {'agent':16s} {'type':18s} {'pnl left':>12s} {'pnl right':>12s} {'delta':>12s} {'ret L%':>8s} {'ret R%':>8s} {'maxDD L':>8s} {'maxDD R':>8s}")
+    lines.append(
+        f"  {'agent':16s} {'type':18s} {'pnl left':>12s} {'pnl right':>12s} {'delta':>12s} {'ret L%':>8s} {'ret R%':>8s} {'maxDD L':>8s} {'maxDD R':>8s}"
+    )
     for agent_id in shown:
         a, b = lagents[agent_id], ragents[agent_id]
         lines.append(
@@ -142,12 +153,14 @@ def compare_runs(left: RunLike, right: RunLike, show_agents: bool = False, top_a
 
 # ------------------------------------------------------------ seed panel
 
-PANEL_METRICS = [key for _, fields in SUMMARY_SECTIONS for key, _, _ in fields if key not in ("final_last", "final_mark", "final_index", "agents", "events_processed")]
+PANEL_METRICS = [
+    key for _, fields in SUMMARY_SECTIONS for key, _, _ in fields if key not in ("final_last", "final_mark", "final_index", "agents", "events_processed")
+]
 
 
-def parse_seeds(text: str) -> List[int]:
+def parse_seeds(text: str) -> list[int]:
     """``"1-10"``, ``"1,3,5"`` or ``"1-5,20"``."""
-    seeds: List[int] = []
+    seeds: list[int] = []
     for part in text.split(","):
         if "-" in part:
             a, b = part.split("-", 1)
@@ -157,7 +170,8 @@ def parse_seeds(text: str) -> List[int]:
     return seeds
 
 
-def run_panel(spec: str, seeds: Sequence[int], progress: Optional[Callable[[str], None]] = None) -> List[SimulationResult]:
+def run_panel(spec: str, seeds: Sequence[int], progress: Optional[Callable[[str], None]] = None) -> list[SimulationResult]:
+    """Simulate ``spec`` on every seed in order."""
     results = []
     for seed in seeds:
         results.append(PerpetualMarket(config_from_spec(spec, seed=seed)).run())
@@ -166,7 +180,8 @@ def run_panel(spec: str, seeds: Sequence[int], progress: Optional[Callable[[str]
     return results
 
 
-def _panel_rows(results: Sequence[SimulationResult]) -> List[Dict[str, Any]]:
+def _panel_rows(results: Sequence[SimulationResult]) -> list[dict[str, Any]]:
+    """Metric rows per run, including the return of each participant type."""
     rows = []
     for result in results:
         summary = result.summary()
@@ -178,6 +193,7 @@ def _panel_rows(results: Sequence[SimulationResult]) -> List[Dict[str, Any]]:
 
 
 def compare_panels(left_spec: str, right_spec: str, seeds: Sequence[int], progress: Optional[Callable[[str], None]] = None) -> str:
+    """Paired comparison over seeds: medians per side, median and mean of the paired differences, win counts."""
     left = _panel_rows(run_panel(left_spec, seeds, progress))
     right = _panel_rows(run_panel(right_spec, seeds, progress))
     keys = list(dict.fromkeys(list(left[0].keys()) + list(right[0].keys())))
@@ -189,7 +205,7 @@ def compare_panels(left_spec: str, right_spec: str, seeds: Sequence[int], progre
         f"  {'metric':36s} {'median L':>12s} {'median R':>12s} {'med diff':>12s} {'mean diff':>12s} {'R > L':>7s}",
     ]
     for key in keys:
-        pairs = [(l.get(key), r.get(key)) for l, r in zip(left, right)]
+        pairs = [(lrow.get(key), rrow.get(key)) for lrow, rrow in zip(left, right, strict=True)]
         pairs = [(a, b) for a, b in pairs if isinstance(a, (int, float)) and isinstance(b, (int, float))]
         if not pairs:
             continue
