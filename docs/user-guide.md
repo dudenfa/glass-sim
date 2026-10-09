@@ -314,7 +314,6 @@ for seed in range(1, 11):
 ```
 
 See [`examples/03_transparency_experiment.py`](../examples/03_transparency_experiment.py).
-The full reproduction pipeline is described in [`experiments/README.md`](../experiments/README.md).
 
 For controlled interventions, `market.shock_index(log_jump)` applies an
 exogenous jump at the current time, and `market.execute(agent_id, actions)`
@@ -405,15 +404,6 @@ The evaluation compares the jointly trained learners with copies of a
 single-agent policy, scripted market makers and no extra participants, all
 with the same capital: coalition and per-agent returns, inventory direction,
 fill quality and market quality.
-
-### Reproducing the paper outputs
-
-```bash
-python experiments/paper/simulator_experiments.py   # scenario sweep, transparency experiment, example session
-experiments/train_single_agents.sh                    # single-agent training runs (A, B, C x 3)
-experiments/evaluate_and_marl.sh                      # evaluations, input analysis, MARL, extended run, figures
-python experiments/paper/make_figures.py            # paper/figures and paper/tables
-```
 
 ## Validation
 

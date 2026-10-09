@@ -1,6 +1,6 @@
 """Reward for learning agents.
 
-Design (see docs/research/PROJECT_STATE.md, "Reward design"):
+Design:
 
 The base reward is the change, between two consecutive decisions, of the
 account's **exit value**: what the account would be worth if it closed its

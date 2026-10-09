@@ -35,3 +35,10 @@ checkpoints/logs/
 documents/
 reports/
 research_notes/
+
+# --- Private working material (kept locally, never published) ----------------
+/paper/
+/docs/research/
+/legacy/docs/
+/experiments/
+/checkpoints/

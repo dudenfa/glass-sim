@@ -18,7 +18,7 @@ nine scripted trader types, a live browser viewer, a Gymnasium environment, a
 multi-agent PPO trainer and an evaluation protocol with paired held-out seeds
 and fair controls.
 
-![A simulated 4-hour session: perpetual and index price with news and liquidations](paper/figures/fig_session.png)
+![A simulated 4-hour session: perpetual and index price with news and liquidations](docs/assets/session.png)
 
 ## Features
 
@@ -151,23 +151,7 @@ transparency block that is zero when hidden), chooses among 9 masked actions,
 and is rewarded by the change of its account's *exit value*: what the account
 would be worth if the position were closed against the real book, so costs and
 illiquidity are visible immediately. Details in the
-[user guide](docs/user-guide.md#driving-agents-from-outside-rl) and in
-[`docs/research/PROJECT_STATE.md`](docs/research/PROJECT_STATE.md) (section 10).
-
-## Results
-
-The simulator reproduces heavy-tailed returns whose kurtosis falls with the
-horizon, near-zero autocorrelation of returns and positive, slowly decaying
-autocorrelation of absolute returns. In the scripted ecology, transparency
-leaves quoted spreads unchanged but raises volume, and the agents that exploit
-visible information lose money doing so. A single PPO agent discovers passive
-liquidity provision on its own and is profitable on unseen markets, yet does
-not beat a scripted market maker with the same capital and speed; giving it
-raw tables of other traders' activity makes it worse. Three agents trained
-together match three scripted market makers once trained long enough, and
-diversify their inventory direction. Figures, tables and the paper outline
-are in [`paper/`](paper/); the full research log with every number is in
-[`docs/research/PROJECT_STATE.md`](docs/research/PROJECT_STATE.md).
+[user guide](docs/user-guide.md#driving-agents-from-outside-rl).
 
 ## Project structure
 
@@ -186,10 +170,7 @@ src/glass_sim/        the package
   __main__.py         the `glass` command line
 tests/                test suite (pytest)
 examples/             runnable examples
-experiments/          training queue, evaluation pipeline and paper scripts
-checkpoints/          trained agents used in the paper, with their evaluations
-paper/                figures, tables, outline and the CEUR template
-docs/                 user guide, metrics reference, research notes
+docs/                 user guide and metrics reference
 legacy/               the earlier spot-market thesis code (V1), unmaintained
 ```
 
@@ -197,7 +178,6 @@ legacy/               the earlier spot-market thesis code (V1), unmaintained
 
 - [User guide](docs/user-guide.md): concepts, writing agents, configuration, results, viewer, RL.
 - [Metrics reference](docs/metrics.md): every field of the reports and JSON outputs.
-- [Project state](docs/research/PROJECT_STATE.md): design rationale, tuning log, validation evidence and all experimental results.
 - [Documentation index](docs/README.md).
 
 ## Citing

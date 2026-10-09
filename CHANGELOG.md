@@ -18,6 +18,5 @@ First public release of GLASS.
 - Reinforcement learning: Gymnasium environment with masked actions and an
   exit-value reward, MaskablePPO training and held-out evaluation with fair
   controls, multi-agent IPPO trainer and evaluation.
-- Experiments and figures of the accompanying paper (`experiments/`, `paper/`).
 
 The earlier spot-market thesis code (V1) is kept, unmaintained, in `legacy/`.

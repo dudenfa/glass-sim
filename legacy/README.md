@@ -15,7 +15,6 @@ The exact code that produced the V1 results is also available at the git tag
 | `scripts/` | V1 command-line entry points (demo, health reports, training, evaluation, panels) |
 | `tests/` | V1 test suite (a few tests were already failing at the time of freezing) |
 | `checkpoints/` | V1 trained agents (`rl_01` ... `rl_03`, Stage A MARL) |
-| `docs/` | `THESIS.md` (V1 manifesto), `PROJECT_STATE_V1.md` (full V1 research log), agent catalog, metrics, commands, preset summaries |
 
 ## Running it
 
@@ -28,8 +27,4 @@ PYTHONPATH=legacy/src python legacy/scripts/serve_market_view.py --paused --port
 PYTHONPATH=legacy/src pytest legacy/tests
 ```
 
-Paths to checkpoints inside the V1 documents refer to the original layout
-(`checkpoints/...`); they now live under `legacy/checkpoints/`.
-
-Why the project moved on from V1 to GLASS is explained in
-[`docs/research/PROJECT_STATE.md`](../docs/research/PROJECT_STATE.md), section 2.
+V1 trained agents are under `legacy/checkpoints/`.
