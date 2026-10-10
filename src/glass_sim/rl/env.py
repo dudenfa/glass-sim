@@ -27,7 +27,8 @@ from ..agents.base import ExternalAgent
 from ..config import AgentSpec, MarketConfig
 from ..market import PerpetualMarket
 from ..types import Transparency
-from .actions import ACTION_NAMES, ActionConfig, ActionSpace
+from .actions import ActionConfig, make_action_space
+from .components import Actions, Encoder, Reward, RewardFactory
 from .observation import ObservationConfig, ObservationEncoder
 from .reward import RewardConfig, RewardTracker
 
@@ -74,18 +75,29 @@ class PerpTradingEnv(gym.Env):
 
     metadata = {"render_modes": []}
 
-    def __init__(self, config: Optional[EnvConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[EnvConfig] = None,
+        *,
+        encoder: Optional[Encoder] = None,
+        actions: Optional[Actions] = None,
+        reward: Optional[RewardFactory] = None,
+    ) -> None:
+        """``encoder``, ``actions`` and ``reward`` replace the parts built from
+        ``config`` (see ``components.py`` for the interfaces)."""
         super().__init__()
         self.config = config or EnvConfig()
         obs_config = self.config.observation
         if self.config.private_signals and not obs_config.include_signal:
             obs_config = replace(obs_config, include_signal=True)
-        self.encoder = ObservationEncoder(obs_config)
-        self.actions = ActionSpace(self.config.actions)
-        self.observation_space = gym.spaces.Box(low=-5.0, high=5.0, shape=(self.encoder.size,), dtype=np.float32)
+        self.encoder = encoder if encoder is not None else ObservationEncoder(obs_config)
+        self.actions = actions if actions is not None else make_action_space(self.config.actions)
+        self.reward_factory = reward if reward is not None else self._default_reward
+        low, high = getattr(self.encoder, "bounds", (-5.0, 5.0))
+        self.observation_space = gym.spaces.Box(low=low, high=high, shape=(self.encoder.size,), dtype=np.float32)
         self.action_space = gym.spaces.Discrete(self.actions.n)
         self.market: Optional[PerpetualMarket] = None
-        self.tracker: Optional[RewardTracker] = None
+        self.tracker: Optional[Reward] = None
         self._episode = 0
         # Parallel workers use disjoint seed sequences: worker k of n takes seeds k, k+n, k+2n, ...
         self.seed_offset = 0
@@ -93,6 +105,9 @@ class PerpTradingEnv(gym.Env):
         self.action_counts = np.zeros(self.actions.n, dtype=np.int64)
 
     # ------------------------------------------------------------- helpers
+
+    def _default_reward(self, market: PerpetualMarket, agent_id: str) -> RewardTracker:
+        return RewardTracker(market, agent_id, self.config.reward)
 
     @property
     def view(self):
@@ -130,7 +145,7 @@ class PerpTradingEnv(gym.Env):
         duration = options.get("duration")
         self._episode += 1
         self.market = PerpetualMarket(self.config.market_config(market_seed, duration))
-        self.tracker = RewardTracker(self.market, LEARNER_ID, self.config.reward)
+        self.tracker = self.reward_factory(self.market, LEARNER_ID)
         self._advance()
         self.tracker.reset()
         return self.encoder.encode(self.view), {"market_seed": market_seed}
@@ -149,14 +164,18 @@ class PerpTradingEnv(gym.Env):
         account = self.market.accounts[LEARNER_ID]
         terminated = not account.active
         truncated = not deciding and not terminated
-        info.update({"action": ACTION_NAMES[action], "valid": bool(mask[action]), "time": self.market.time})
+        info.update({"action": self.actions.names[action], "valid": bool(mask[action]), "time": self.market.time})
         return self.encoder.encode(self.view), float(reward), terminated, truncated, info
 
 
-def make_env(config: Optional[EnvConfig] = None):
-    """Factory for vectorized environments: ``make_env(cfg)`` returns a zero-argument constructor."""
+def make_env(config: Optional[EnvConfig] = None, **components: Any):
+    """Factory for vectorized environments: ``make_env(cfg)`` returns a zero-argument constructor.
+
+    ``components`` (``encoder``, ``actions``, ``reward``) are passed to
+    ``PerpTradingEnv``; with subprocess vectorization they must be picklable.
+    """
 
     def _init():
-        return PerpTradingEnv(config)
+        return PerpTradingEnv(config, **components)
 
     return _init

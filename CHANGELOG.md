@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Pluggable RL components: `PerpTradingEnv(encoder=..., actions=..., reward=...)`
+  accepts custom observation encoders, action menus and reward trackers
+  (interfaces in `glass_sim/rl/components.py`); `make_env` forwards them.
+- Ladder action menu (`ActionConfig(kind="ladder")`, `--actions ladder`):
+  market orders and post-only quotes at several price offsets and sizes,
+  optionally several resting quotes per side. Checkpoints record the menu.
+
 ## 0.1.0 (2026-10)
 
 First public release of GLASS.

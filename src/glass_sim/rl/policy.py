@@ -22,7 +22,7 @@ from typing import Any, Optional, Union
 import numpy as np
 
 from ..agents.base import Agent
-from .actions import ACTION_NAMES, ActionConfig, ActionSpace
+from .actions import ActionConfig, ActionSpace, make_action_space
 from .observation import ObservationConfig, ObservationEncoder
 
 
@@ -74,8 +74,9 @@ def encoder_and_actions_from_config(run_config: dict[str, Any]) -> tuple[Observa
     obs_cfg = ObservationConfig(**env.get("observation", {}))
     if env.get("private_signals"):
         obs_cfg = replace(obs_cfg, include_signal=True)
-    act_cfg = ActionConfig(**env.get("actions", {}))
-    return ObservationEncoder(obs_cfg), ActionSpace(act_cfg)
+    act = {k: tuple(v) if isinstance(v, list) else v for k, v in env.get("actions", {}).items()}
+    act_cfg = ActionConfig(**act)
+    return ObservationEncoder(obs_cfg), make_action_space(act_cfg)
 
 
 class PolicyAgent(Agent):
@@ -115,7 +116,7 @@ class PolicyAgent(Agent):
     def action_distribution(self) -> dict[str, float]:
         """Share of each action taken so far, for reports and the viewer."""
         total = max(1, int(self.action_counts.sum()))
-        return {name: round(float(count) / total, 4) for name, count in zip(ACTION_NAMES, self.action_counts)}
+        return {name: round(float(count) / total, 4) for name, count in zip(self.actions.names, self.action_counts)}
 
 
 def policy_agent_from_checkpoint(model_path: Union[str, Path], deterministic: bool = True, agent_type: str = "rl_agent") -> PolicyAgent:

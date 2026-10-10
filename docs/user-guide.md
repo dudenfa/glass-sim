@@ -355,7 +355,7 @@ mask = env.action_masks()  # for sb3_contrib.MaskablePPO
   `env.encoder.feature_names` lists them.
 - **Actions**: 9 discrete actions (hold, market buy/sell small/large, post-only
   bid/ask at the touch, cancel all, close position) with validity masks and a
-  10x exposure cap.
+  10x exposure cap, or the richer ladder menu (below).
 - **Reward**: change of the account's exit value (collateral + value of the
   position if closed against the real book, minus the closing fee) between
   decisions, which includes fees, funding and liquidation penalties, plus an
@@ -387,6 +387,70 @@ glass train --name my_agent_more --init-from checkpoints/my_agent/model.zip --tr
 
 Who traded is described by observable properties (recent net flow, leverage,
 return), never by name, and every field follows the transparency level.
+
+### Richer actions: the ladder menu
+
+The basic menu quotes only at the touch with one size. The ladder menu
+(`LadderActionSpace`) lets the agent choose how far from the best price to
+quote and how large: hold, cancel all, close position, a market buy and sell
+per size, and a post-only bid and ask per (offset, size). With the defaults
+(offsets 0, 2, 5, 10 bps; sizes 0.5x and 2x equity) it has 23 actions.
+
+```python
+from glass_sim.rl import ActionConfig, EnvConfig, PerpTradingEnv
+
+actions = ActionConfig(kind="ladder", ladder_offsets_bps=(0, 5, 20), ladder_sizes=(0.25, 1.0), max_orders_per_side=2)
+env = PerpTradingEnv(EnvConfig(actions=actions))
+print(env.actions.names)
+```
+
+With `max_orders_per_side=1` a new quote replaces the agent's quote on that
+side; with more, quotes stack and the oldest is canceled when the side is
+full. On the command line: `glass train --actions ladder` (also for
+`glass_sim.rl.marl`). The menu is saved with the checkpoint, so evaluation and
+`policy_agent_from_checkpoint` rebuild it automatically.
+
+### Your own observation, actions or reward
+
+`PerpTradingEnv` takes three optional objects that replace the parts built
+from `EnvConfig`. Any object with the right methods works (the interfaces
+are in `glass_sim/rl/components.py`); subclassing the built-in
+`ObservationEncoder`, `ActionSpace` or `RewardTracker` is often simplest.
+
+```python
+import numpy as np
+from glass_sim.rl import PerpTradingEnv, RewardTracker
+
+
+class SpreadAndPosition:  # observation: needs `size` and `encode(view)`
+    size = 2
+    feature_names = ["spread_bps", "position"]
+    bounds = (-1e6, 1e6)  # optional, default (-5, 5)
+
+    def encode(self, view):
+        spread = 0.0 if view.spread is None else view.spread / view.mark_price * 1e4
+        return np.array([spread, view.position], dtype=np.float32)
+
+
+class RiskAdjusted(RewardTracker):  # reward: `reset()` and `step() -> (reward, info)`
+    def step(self):
+        reward, info = super().step()
+        return reward - 0.01 * abs(info["leverage"]), info
+
+
+env = PerpTradingEnv(
+    encoder=SpreadAndPosition(),
+    reward=lambda market, agent_id: RiskAdjusted(market, agent_id),  # called once per episode
+)
+```
+
+A custom action menu needs `names`, `n`, `mask(view)` (a boolean array; index
+0 must always be valid) and `decode(index, view)` returning a list of orders
+(`MarketOrder`, `LimitOrder`, `Cancel`). `make_env(config, encoder=..., actions=..., reward=...)`
+forwards the same objects to vectorized environments (they must be
+picklable for subprocess workers). The `glass train` command and the MARL
+trainer build their parts from the configuration, so custom objects are used
+from Python with your own training loop or Stable-Baselines3 directly.
 
 ### Several learning agents (MARL)
 

@@ -44,7 +44,7 @@ from ..agents.base import ExternalAgent
 from ..config import AgentSpec, parse_duration
 from ..market import PerpetualMarket
 from ..types import Transparency
-from .actions import ACTION_NAMES, ActionConfig, ActionSpace
+from .actions import ActionConfig, make_action_space
 from .observation import ObservationConfig, ObservationEncoder
 from .reward import RewardConfig, RewardTracker
 
@@ -97,7 +97,7 @@ class MultiAgentMarket:
         self.config = config
         self.ids = config.learner_ids()
         self.encoder = ObservationEncoder(config.observation)
-        self.actions = ActionSpace(config.actions)
+        self.actions = make_action_space(config.actions)
         self.market: Optional[PerpetualMarket] = None
         self.trackers: dict[str, RewardTracker] = {}
         self.open: dict[str, bool] = {}
@@ -230,7 +230,7 @@ class Learner:
         self.streams: dict[int, list[_Transition]] = {w: [] for w in range(n_workers)}
         self.episode_returns: list[float] = []
         self._running: dict[int, float] = {}
-        self.action_counts = np.zeros(len(ACTION_NAMES), dtype=np.int64)
+        self.action_counts = np.zeros(int(model.action_space.n), dtype=np.int64)
 
     def size(self) -> int:
         """Transitions buffered since the last update, across all workers."""
@@ -413,7 +413,8 @@ def train_marl(
     np.random.seed(seed)
     ids = config.learner_ids()
     encoder = ObservationEncoder(config.observation)
-    n_actions = len(ACTION_NAMES)
+    action_names = list(make_action_space(config.actions).names)
+    n_actions = len(action_names)
 
     models = {}
     if init_from:
@@ -452,7 +453,7 @@ def train_marl(
         "init_from": init_from,
         "env": asdict(config),
         "observation_features": encoder.feature_names,
-        "actions": ACTION_NAMES,
+        "actions": action_names,
     }
     (out / "config.json").write_text(json.dumps(record, indent=2, default=str))
 
@@ -472,7 +473,7 @@ def train_marl(
     log = csv.writer(log_handle)
     log.writerow(
         ["seconds", "decisions", "learner", "update", "mean_episode_return_last10", "policy_loss", "value_loss", "entropy", "approx_kl"]
-        + [f"act_{n}" for n in ACTION_NAMES]
+        + [f"act_{n}" for n in action_names]
     )
     episodes_csv = (out / "episodes.csv").open("w", newline="")
     episodes_log = csv.writer(episodes_csv)
@@ -608,6 +609,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--trades-table", type=int, default=0)
     parser.add_argument("--accounts-table", type=int, default=0)
     parser.add_argument("--net-arch", default="128,128")
+    parser.add_argument("--actions", default="basic", choices=["basic", "ladder"], help="action menu (see rl/actions.py and rl/ladder.py)")
     parser.add_argument("--shared-policy", action="store_true")
     parser.add_argument("--rollout", type=int, default=8192, help="transitions per learner between updates")
     parser.add_argument("--out-root", default="checkpoints")
@@ -623,6 +625,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         train_seeds=_parse_seeds(args.train_seeds),
         collateral=args.collateral,
         observation=ObservationConfig(trades_table=args.trades_table, accounts_table=args.accounts_table),
+        actions=ActionConfig(kind=args.actions),
     )
     out = train_marl(
         args.name,

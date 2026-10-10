@@ -48,11 +48,21 @@ ACTION_NAMES = [
 
 @dataclass(frozen=True)
 class ActionConfig:
-    """Order sizes as multiples of equity, plus the exposure cap."""
+    """Order sizes as multiples of equity, the exposure cap, and which action menu to use.
+
+    ``kind="basic"`` is the 9-action menu below. ``kind="ladder"`` is the richer
+    menu of ``LadderActionSpace`` (several price offsets and sizes per side);
+    its shape is set by ``ladder_offsets_bps``, ``ladder_sizes`` and
+    ``max_orders_per_side``.
+    """
 
     small_leverage: float = 0.5
     large_leverage: float = 2.0
     max_leverage: float = 10.0
+    kind: str = "basic"
+    ladder_offsets_bps: tuple = (0.0, 2.0, 5.0, 10.0)
+    ladder_sizes: tuple = (0.5, 2.0)
+    max_orders_per_side: int = 1
 
 
 class ActionSpace:
@@ -154,3 +164,14 @@ class ActionSpace:
                 return []
             return [MarketOrder(Side.SELL if position > 0 else Side.BUY, abs(position), reduce_only=True, tag="rl")]
         raise ValueError(f"unknown action index {index}")
+
+
+def make_action_space(config: ActionConfig = ActionConfig()) -> ActionSpace:
+    """The action menu selected by ``config.kind`` ("basic" or "ladder")."""
+    if config.kind == "basic":
+        return ActionSpace(config)
+    if config.kind == "ladder":
+        from .ladder import LadderActionSpace
+
+        return LadderActionSpace(config)
+    raise ValueError(f"unknown action kind {config.kind!r} (expected 'basic' or 'ladder')")

@@ -23,7 +23,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from .actions import ACTION_NAMES, ActionConfig
+from .actions import ActionConfig, make_action_space
 from .env import LEARNER_ID, EnvConfig, PerpTradingEnv
 from .observation import ObservationConfig
 from .reward import RewardConfig
@@ -41,7 +41,7 @@ def _parse_seeds(text: str) -> tuple:
     return tuple(seeds)
 
 
-def _episode_logger(path: Path):
+def _episode_logger(path: Path, action_names: list[str]):
     """A callback writing one CSV row per finished episode."""
     from stable_baselines3.common.callbacks import BaseCallback
 
@@ -52,7 +52,7 @@ def _episode_logger(path: Path):
             super().__init__()
             self.handle = path.open("w", newline="")
             self.writer = csv.writer(self.handle)
-            self.writer.writerow(["timesteps", "episode", "return", "pnl_pct", "liquidations", "length", "seconds"] + [f"act_{n}" for n in ACTION_NAMES])
+            self.writer.writerow(["timesteps", "episode", "return", "pnl_pct", "liquidations", "length", "seconds"] + [f"act_{n}" for n in action_names])
             self.episode = 0
             self.started = time.perf_counter()
             self.returns: dict[int, float] = {}
@@ -69,9 +69,9 @@ def _episode_logger(path: Path):
                 self.returns[i] = self.returns.get(i, 0.0) + float(rewards[i])
                 self.lengths[i] = self.lengths.get(i, 0) + 1
                 self.liqs[i] = self.liqs.get(i, 0.0) + float(info.get("liquidations", 0.0))
-                acts = self.actions.setdefault(i, np.zeros(len(ACTION_NAMES)))
+                acts = self.actions.setdefault(i, np.zeros(len(action_names)))
                 if "action" in info:
-                    acts[ACTION_NAMES.index(info["action"])] += 1
+                    acts[action_names.index(info["action"])] += 1
                 if dones[i]:
                     self.episode += 1
                     pnl_pct = info.get("final_pnl_pct", None)
@@ -96,7 +96,7 @@ def _episode_logger(path: Path):
                     self.returns[i] = 0.0
                     self.lengths[i] = 0
                     self.liqs[i] = 0.0
-                    self.actions[i] = np.zeros(len(ACTION_NAMES))
+                    self.actions[i] = np.zeros(len(action_names))
             return True
 
         def _on_training_end(self) -> None:
@@ -161,6 +161,7 @@ def train(
         policy_kwargs={"net_arch": [128, 128]},
     )
     params.update(ppo_kwargs or {})
+    action_names = list(make_action_space(env_config.actions).names)
     config_record = {
         "name": name,
         "timesteps": timesteps,
@@ -170,7 +171,7 @@ def train(
         "ppo": params,
         "env": asdict(env_config),
         "observation_features": _PnLInfoEnv(env_config).encoder.feature_names,
-        "actions": ACTION_NAMES,
+        "actions": action_names,
     }
     (out / "config.json").write_text(json.dumps(config_record, indent=2, default=str))
 
@@ -183,7 +184,7 @@ def train(
         model = MaskablePPO("MlpPolicy", venv, seed=seed, verbose=0, device="cpu", **params)
     callbacks = CallbackList(
         [
-            _episode_logger(out / "training_log.csv"),
+            _episode_logger(out / "training_log.csv", action_names),
             CheckpointCallback(save_freq=max(1, checkpoint_every // n_envs), save_path=str(out / "checkpoints"), name_prefix="model"),
         ]
     )
@@ -218,6 +219,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--liquidation-penalty", type=float, default=0.05)
     parser.add_argument("--inactivity-penalty", type=float, default=0.0)
     parser.add_argument("--max-leverage", type=float, default=10.0)
+    parser.add_argument("--actions", default="basic", choices=["basic", "ladder"], help="action menu (see rl/actions.py and rl/ladder.py)")
     parser.add_argument("--out-root", default="checkpoints")
     parser.add_argument("--init-from", default=None, help="model.zip to continue training from")
     args = parser.parse_args(argv)
@@ -238,7 +240,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             trades_table=args.trades_table,
             accounts_table=args.accounts_table,
         ),
-        actions=ActionConfig(max_leverage=args.max_leverage),
+        actions=ActionConfig(max_leverage=args.max_leverage, kind=args.actions),
         reward=RewardConfig(liquidation_penalty=args.liquidation_penalty, inactivity_penalty=args.inactivity_penalty),
     )
     net_arch = [int(x) for x in args.net_arch.split(",") if x]
