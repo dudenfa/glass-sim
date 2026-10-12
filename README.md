@@ -45,7 +45,7 @@ and fair controls.
   hold and scripted market-maker controls, an independent-PPO multi-agent
   trainer, a PettingZoo environment for other MARL libraries, and pluggable
   observation, action and reward components.
-- **Validated**: an accounting invariant checked every simulated second, 69
+- **Validated**: an accounting invariant checked every simulated second, 73
   tests, and heavy tails and volatility clustering in the generated prices.
 - **Fast**: 4 simulated hours with 88 agents (about 130,000 events) in roughly
   5 seconds on a laptop; the core depends only on NumPy.
@@ -107,7 +107,10 @@ config = replace(base, agents=base.agents + (AgentSpec(Contrarian, count=5, coll
 PerpetualMarket(config).run().print_report()
 ```
 
-More in [`examples/`](examples/) and in the [user guide](docs/user-guide.md).
+New to GLASS? The [tutorial notebooks](notebooks/) go step by step from a
+first market to custom agents, paired experiments and a trained RL agent; they
+are saved with their outputs, so you can read them on GitHub. More in
+[`examples/`](examples/) and in the [user guide](docs/user-guide.md).
 
 ## Transparency levels
 
@@ -172,17 +175,19 @@ src/glass_sim/        the package
   agents/             Agent base class, ExternalAgent, nine scripted traders
   scenarios.py        ready-made populations
   results.py, analysis.py, report.py, compare.py   metrics, stylized facts, reports, comparisons
-  rl/                 observation, actions, reward, Gymnasium env, training, evaluation, MARL
+  rl/                 observation, actions, reward, Gymnasium and PettingZoo envs, training, evaluation, MARL
   live/               browser viewer (session, HTTP server, static web app)
   __main__.py         the `glass` command line
 tests/                test suite (pytest)
 examples/             runnable examples
+notebooks/            step-by-step tutorials
 docs/                 user guide and metrics reference
 legacy/               the earlier spot-market thesis code (V1), unmaintained
 ```
 
 ## Documentation
 
+- [Tutorials](notebooks/): three notebooks, from a first market to training an RL agent.
 - [User guide](docs/user-guide.md): concepts, writing agents, configuration, results, viewer, RL.
 - [Metrics reference](docs/metrics.md): every field of the reports and JSON outputs.
 - [Documentation index](docs/README.md).

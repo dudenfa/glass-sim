@@ -25,6 +25,8 @@ htmlcov/
 # Simulation runs and local experiment output (regenerate with the CLI / experiments/).
 artifacts/
 market_demo_output/
+notebooks/runs/
+.ipynb_checkpoints/
 *.log
 
 # Intermediate training snapshots: only final models (model.zip) are versioned.

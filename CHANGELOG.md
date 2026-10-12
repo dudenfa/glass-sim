@@ -13,6 +13,9 @@
   terminations and pluggable components; passes PettingZoo's API and seed
   tests. PettingZoo joins the `rl` extra. New example `05_pettingzoo.py`.
 - `MultiAgentMarket` accepts custom encoder, action menu and reward.
+- Tutorial notebooks (`notebooks/`): a first market, agents and paired
+  experiments, reinforcement learning; saved with outputs. New `notebooks`
+  install extra.
 
 ## 0.1.0 (2026-10)
 

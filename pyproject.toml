@@ -47,6 +47,8 @@ rl = [
 # DataFrame export and the paper figures.
 analysis = ["pandas>=2.0", "matplotlib>=3.7"]
 dev = ["pytest>=8.0", "ruff>=0.6"]
+# Running the tutorial notebooks.
+notebooks = ["glass-sim[rl,analysis]", "jupyterlab>=4"]
 all = ["glass-sim[rl,analysis,dev]"]
 
 [project.scripts]
@@ -89,3 +91,10 @@ ignore = [
     "B023",   # helpers are called inside the loop that defines them
     "B905",   # zip() length checks are not needed here
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Tutorials: imports appear where they are first used; short plotting statements share a line.
+"notebooks/*.ipynb" = ["E402", "E702"]
+
+[tool.ruff.format]
+exclude = ["notebooks/*.ipynb"]

@@ -8,6 +8,7 @@
 Elsewhere in the repository:
 
 - [`README.md`](../README.md): overview, installation, quick start.
+- [`notebooks/README.md`](../notebooks/README.md): the tutorial notebooks.
 - [`examples/README.md`](../examples/README.md): the runnable examples.
 - [`legacy/README.md`](../legacy/README.md): the earlier spot-market code (V1).
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md), [`CHANGELOG.md`](../CHANGELOG.md), [`CITATION.cff`](../CITATION.cff).
