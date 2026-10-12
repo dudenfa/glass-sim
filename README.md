@@ -212,7 +212,7 @@ If you use GLASS in your research, please cite it (see [`CITATION.cff`](CITATION
   author  = {Mantovani, Martino},
   title   = {GLASS: A Transparent Perpetual-Futures Market Simulator for Multi-Agent Reinforcement Learning},
   year    = {2026},
-  version = {0.1.0},
+  version = {0.2.0},
   url     = {https://github.com/dudenfa/glass-sim}
 }
 ```

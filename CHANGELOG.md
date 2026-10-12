@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-12)
 
 - Fix: saving a run that contains an agent added by hand failed without the
   RL extras installed (the replay code imported the RL policy module, which
