@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix: in the multi-agent trainer (`glass_sim.rl.marl`), a learner's last
+  transition of an episode cut by the time limit bootstrapped from the first
+  decision of the next episode on the same worker, and its advantage chained
+  into that episode. Such transitions are now marked truncated, valued from
+  the state the episode actually ended in, and never joined to the next one.
 - Pluggable RL components: `PerpTradingEnv(encoder=..., actions=..., reward=...)`
   accepts custom observation encoders, action menus and reward trackers
   (interfaces in `glass_sim/rl/components.py`); `make_env` forwards them.

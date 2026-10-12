@@ -144,10 +144,15 @@ class MultiAgentMarket:
                 if self.open[other] and not self.market.accounts[other].active:
                     closed.append(self._close(other, terminal=True))
             if agent_id is None:
+                # Time limit: the open transitions are truncated, not terminal. Their final
+                # observation is reported so the trainer can bootstrap from the value of the
+                # state the episode actually ended in (see ``Learner.record_final_value``).
+                final_obs: dict[str, np.ndarray] = {}
                 for other in self.ids:
                     if self.open[other]:
+                        final_obs[other] = self._observe(other)[0]
                         closed.append(self._close(other, terminal=False))
-                return {"done": True, "closed": closed, "final": self._episode_stats()}
+                return {"done": True, "closed": closed, "final": self._episode_stats(), "final_obs": final_obs}
             if not self.market.accounts[agent_id].active:
                 self.market.act(agent_id, [])
                 continue
@@ -221,6 +226,7 @@ class _Transition:
     value: float
     reward: float
     terminal: bool
+    truncated: bool = False
     next_value: float = 0.0
     has_next: bool = False
 
@@ -244,18 +250,36 @@ class Learner:
         """Transitions buffered since the last update, across all workers."""
         return sum(len(s) for s in self.streams.values())
 
-    def record_close(self, worker: int, reward: float, terminal: bool) -> None:
-        """Turn the pending decision on ``worker`` into a transition now that its reward is known."""
+    def record_close(self, worker: int, reward: float, terminal: bool, truncated: bool = False) -> None:
+        """Turn the pending decision on ``worker`` into a transition now that its reward is known.
+
+        ``truncated`` marks a transition cut by the end of the episode duration:
+        it is not terminal (the market did not end the agent), but nothing of
+        the next episode may be used to value it.
+        """
         pending = self.pending.pop(worker, None)
         if pending is None:
             return
-        self.streams[worker].append(_Transition(pending.obs, pending.mask, pending.action, pending.log_prob, pending.value, reward, terminal))
+        self.streams[worker].append(
+            _Transition(pending.obs, pending.mask, pending.action, pending.log_prob, pending.value, reward, terminal, truncated=truncated)
+        )
         self._running[worker] = self._running.get(worker, 0.0) + reward
 
     def record_value_of_next(self, worker: int, value: float) -> None:
-        """The value of the new decision state bootstraps the previous transition."""
+        """The value of the new decision state bootstraps the previous transition of the same episode.
+
+        A truncated transition is skipped: the next decision on this worker
+        belongs to a new episode, whose value says nothing about the old one.
+        """
         stream = self.streams[worker]
-        if stream and not stream[-1].terminal and not stream[-1].has_next:
+        if stream and not stream[-1].terminal and not stream[-1].truncated and not stream[-1].has_next:
+            stream[-1].next_value = value
+            stream[-1].has_next = True
+
+    def record_final_value(self, worker: int, value: float) -> None:
+        """Bootstrap a truncated transition from the value of the state the episode ended in."""
+        stream = self.streams[worker]
+        if stream and stream[-1].truncated and not stream[-1].has_next:
             stream[-1].next_value = value
             stream[-1].has_next = True
 
@@ -268,10 +292,12 @@ class Learner:
 
         Streams are kept apart because transitions of different workers
         interleave in wall-clock order but are causally unrelated: a transition
-        may only bootstrap from the next transition of its own stream. When an
-        update cuts a stream before its next decision arrived, the last
-        transition bootstraps from its own value estimate instead of being
-        dropped.
+        may only bootstrap from the next transition of its own stream. A
+        terminal or truncated transition ends the chain: the advantage of an
+        episode's last decision never includes anything from the next episode
+        on the same worker. When an update cuts a stream before its next
+        decision arrived, the last transition bootstraps from its own value
+        estimate instead of being dropped.
         """
         obs, masks, actions, log_probs, values, advantages, returns = [], [], [], [], [], [], []
         for stream in self.streams.values():
@@ -282,7 +308,7 @@ class Learner:
                 not_terminal = 0.0 if tr.terminal else 1.0
                 next_value = tr.next_value if tr.has_next else tr.value  # episode cut: bootstrap with own value
                 delta = tr.reward + self.gamma * not_terminal * next_value - tr.value
-                continues = t + 1 < len(stream) and tr.has_next and not tr.terminal
+                continues = t + 1 < len(stream) and tr.has_next and not tr.terminal and not tr.truncated
                 adv = delta + (self.gamma * self.gae_lambda * not_terminal * adv if continues else 0.0)
                 stream_adv[t] = adv
             for tr, a in zip(stream, stream_adv, strict=True):
@@ -495,17 +521,26 @@ def train_marl(
     requests = [remote.recv() for remote in remotes]
     worker_seed = [r.get("seed") for r in requests]
 
-    def handle_closed(w: int, closed) -> None:
-        """Hand every closed transition of worker ``w`` to its learner."""
+    def handle_closed(w: int, closed, episode_over: bool = False) -> None:
+        """Hand every closed transition of worker ``w`` to its learner; non-terminal closes of a finished episode are truncations."""
         for agent_id, reward, terminal, _info in closed:
-            learners[agent_id].record_close(w, reward, terminal)
+            learners[agent_id].record_close(w, reward, terminal, truncated=episode_over and not terminal)
+
+    def record_final_values(w: int, final_obs: dict[str, np.ndarray]) -> None:
+        """Value the state each truncated learner ended in, so its last transition bootstraps from it."""
+        for agent_id, obs in final_obs.items():
+            learner = learners[agent_id]
+            with torch.no_grad():
+                value = learner.policy.predict_values(torch.as_tensor(obs[None], device=learner.policy.device)).item()
+            learner.record_final_value(w, float(value))
 
     try:
         while min(decisions.values()) < timesteps_per_learner:
             # 1. Record transitions that ended and episode ends.
             for w, req in enumerate(requests):
-                handle_closed(w, req["closed"])
+                handle_closed(w, req["closed"], episode_over=req["done"])
                 if req["done"]:
+                    record_final_values(w, req.get("final_obs", {}))
                     for agent_id in ids:
                         learners[agent_id].end_episode(w)
                     episodes_log.writerow([round(time.perf_counter() - started, 1), w, worker_seed[w]] + [round(req["final"][a], 4) for a in ids])

@@ -146,3 +146,65 @@ def test_ppo_update_handles_a_single_sample_last_minibatch():
     }
     ppo_update(model.policy, data, epochs=2, batch_size=256, clip=0.2, ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5)
     assert all(torch.isfinite(p).all() for p in model.policy.parameters())
+
+
+def test_truncated_transition_never_bootstraps_from_the_next_episode():
+    from glass_sim.rl.marl import Learner, _Pending
+
+    class Model:
+        class action_space:
+            n = 9
+
+        policy = None
+
+    learner = Learner("x", Model, n_workers=1, gamma=0.99, gae_lambda=0.95)
+    obs, mask = np.zeros(3, dtype=np.float32), np.ones(9, dtype=bool)
+    # Episode 1: one decision, then the time limit (a truncation, not a termination).
+    learner.pending[0] = _Pending(obs, mask, 0, 0.0, value=1.0)
+    learner.record_close(0, reward=0.5, terminal=False, truncated=True)
+    learner.record_final_value(0, 3.0)  # value of the state the episode ended in
+    learner.end_episode(0)
+    # Episode 2 starts on the same worker: its first decision must not touch the old transition.
+    learner.record_value_of_next(0, 100.0)
+    learner.pending[0] = _Pending(obs, mask, 0, 0.0, value=2.0)
+    learner.record_close(0, reward=1.0, terminal=False)
+    learner.record_value_of_next(0, 4.0)
+    first, second = learner.streams[0]
+    assert first.truncated and first.has_next and first.next_value == 3.0
+    assert second.has_next and second.next_value == 4.0
+    data = learner.batch()
+    # The first advantage is exactly its own TD error: nothing of episode 2 leaks into it.
+    assert data["advantages"][0] == pytest.approx(0.5 + 0.99 * 3.0 - 1.0)
+    assert data["advantages"][1] == pytest.approx(1.0 + 0.99 * 4.0 - 2.0)
+
+
+def test_record_value_of_next_still_bootstraps_within_an_episode():
+    from glass_sim.rl.marl import Learner, _Pending
+
+    class Model:
+        class action_space:
+            n = 9
+
+        policy = None
+
+    learner = Learner("x", Model, n_workers=1, gamma=0.99, gae_lambda=0.95)
+    obs, mask = np.zeros(3, dtype=np.float32), np.ones(9, dtype=bool)
+    learner.pending[0] = _Pending(obs, mask, 0, 0.0, value=1.0)
+    learner.record_close(0, reward=0.0, terminal=False)
+    learner.record_value_of_next(0, 5.0)
+    assert learner.streams[0][-1].has_next and learner.streams[0][-1].next_value == 5.0
+    learner.record_final_value(0, 9.0)  # only truncated transitions take a final value
+    assert learner.streams[0][-1].next_value == 5.0
+
+
+def test_episode_end_reports_the_final_observation_of_truncated_learners():
+    from glass_sim.rl.marl import MultiAgentConfig, MultiAgentMarket
+
+    env = MultiAgentMarket(MultiAgentConfig(scenario="small", n_learners=2, episode_duration=300.0))
+    request = env.reset(seed=3)
+    while not request["done"]:
+        request = env.step(request["agent"], 0)
+    truncated = {agent_id for agent_id, _reward, terminal, _info in request["closed"] if not terminal}
+    assert truncated == set(request["final_obs"])
+    for obs in request["final_obs"].values():
+        assert obs.shape == (env.encoder.size,) and obs.dtype == np.float32
