@@ -61,6 +61,24 @@ and `compare.py` (formatting). Update this file when fields change.
 | `events_processed` | discrete events simulated |
 | `conservation_error` | sum of equities + insurance fund + fees - deposits - initial fund. Must be ~0 (float rounding, e.g. 1e-8); anything larger means an accounting bug |
 
+## Liquidation events (`liquidations.csv`, `result.liquidations`, viewer tab)
+
+One row per liquidation, in the order they happened:
+
+| field | meaning |
+|---|---|
+| `time` | simulated time of the liquidation |
+| `agent_id` | the liquidated account |
+| `side_closed` | side of the forced order: `sell` closed a long, `buy` closed a short |
+| `quantity` | contracts the account held when it was liquidated |
+| `mark_price` | mark price at the moment this account was liquidated; in a cascade, later rows see the mark moved by the earlier ones |
+| `avg_fill_price` | average price of the forced close against the book (empty if nothing could be filled) |
+| `adl_quantity` | contracts the book could not absorb, closed by auto-deleveraging at `mark_price` |
+| `bad_debt` | negative collateral left after the close, paid by the insurance fund |
+| `penalty` | liquidation penalty paid into the insurance fund (1% of closed notional, capped at the remaining collateral) |
+| `equity_before` | the account's equity at `mark_price` just before the close |
+| `deactivated` | whether the account left the market (collateral below 5% of its initial deposit) |
+
 ## Stylized facts (`stylized_facts.json`)
 
 For horizons 10 s, 60 s and 300 s, computed on log returns of the last trade price:

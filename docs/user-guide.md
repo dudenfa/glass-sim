@@ -37,8 +37,8 @@ result.print_report()
 frames = result.to_frames()  # pandas DataFrames: bars, trades, liquidations, funding, equity, ...
 ```
 
-The reference scenario simulates 4 hours with 88 agents (about 130,000
-events) in roughly 5 seconds on a laptop.
+The reference scenario simulates 4 hours with 88 agents (well over 100,000
+events) in a few seconds on a laptop.
 
 Runnable examples live in [`examples/`](../examples).
 
@@ -110,7 +110,11 @@ When equity falls below maintenance margin:
 5. an account left with less than 5% of its initial collateral leaves the market.
 
 Liquidation fills move the price, which can trigger further liquidations, so
-cascades emerge naturally.
+cascades emerge naturally. Within a cascade, accounts are liquidated worst
+first and each one at the mark price as it stands at that moment: the forced
+close, its penalty and any auto-deleveraging see the price moved by the
+previous liquidation, and an account that the previous liquidation pushed
+back above its maintenance margin is left alone.
 
 ### Index, mark and funding
 

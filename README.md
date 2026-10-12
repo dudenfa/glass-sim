@@ -48,10 +48,12 @@ and fair controls.
   hold and scripted market-maker controls, an independent-PPO multi-agent
   trainer, a PettingZoo environment for other MARL libraries, and pluggable
   observation, action and reward components.
-- **Validated**: an accounting invariant checked every simulated second, 88
-  tests, and heavy tails and volatility clustering in the generated prices.
-- **Fast**: 4 simulated hours with 88 agents (about 130,000 events) in roughly
-  5 seconds on a laptop; the core depends only on NumPy.
+- **Validated**: an accounting invariant checked every simulated second, a
+  test suite covering matching, margin, liquidation, funding, transparency,
+  replays and the RL layer, and heavy tails and volatility clustering in the
+  generated prices.
+- **Fast**: 4 simulated hours with 88 agents (well over 100,000 events) in a
+  few seconds on a laptop; the core depends only on NumPy.
 
 ## Install
 

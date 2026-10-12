@@ -14,7 +14,10 @@ How experience is collected:
   decisions of all workers per learner, samples actions, and sends them back.
 - A learner's transition runs from one of its decisions to its next one. Its
   reward (change in exit value plus penalties) is computed when it decides
-  again, when it is liquidated out, or when the episode ends.
+  again, when it is liquidated out, or when the episode ends. Liquidation is
+  terminal; the end of the episode duration is a truncation: the transition
+  is valued from the state the episode ended in, and nothing from the next
+  episode on the same worker is used for it.
 
 Training uses the clipped PPO objective with generalized advantage estimation,
 computed separately for each (worker, learner) stream of transitions, with the
