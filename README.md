@@ -129,8 +129,11 @@ are saved with their outputs, so you can read them on GitHub. More in
 | buyer and seller of every trade | | ✓ | ✓ |
 | every account's position, entry, leverage, PnL, liquidation price | | | ✓ |
 
-Agents always see their own account and orders. Asking for hidden information
-raises `TransparencyError`; `view.can_see(level)` lets an agent adapt.
+Agents always see their own account and orders. Other accounts appear under
+wallet-like hashed ids, never under names, so what an agent knows about another
+participant is only what the level reveals; the researcher sees the real ids.
+Asking for hidden information raises `TransparencyError`; `view.can_see(level)`
+lets an agent adapt.
 
 ## Scenarios
 

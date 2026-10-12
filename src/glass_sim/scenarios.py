@@ -8,6 +8,11 @@ at a time relative to it, so they can be compared directly:
 - ``retail_frenzy()``: more, higher-leverage retail traders;
 - ``no_arbitrage()``: removes the basis arbitrageurs that anchor perp to index.
 
+Every scenario blinds agents to names: other accounts appear under wallet-like
+hashed ids (``pseudonymous_ids=True``), as on a real transparent exchange, so
+what an agent knows about another participant is only what the transparency
+level reveals. The researcher still sees the real ids in results and the viewer.
+
 All scenario functions accept keyword overrides for any ``MarketConfig`` field,
 e.g. ``scenarios.default(seed=3, duration=parse_duration("1h"))``. Overrides
 win over what the scenario sets itself, so ``calm(news=...)`` or
@@ -106,7 +111,7 @@ def _variant(base: MarketConfig, changes: dict, overrides: dict) -> MarketConfig
 
 def default(**overrides) -> MarketConfig:
     """Reference ecology: 88 agents of nine types, FULL transparency, 4 hours."""
-    config = MarketConfig(agents=default_population(), transparency=Transparency.FULL, duration=4 * HOUR, name="default")
+    config = MarketConfig(agents=default_population(), transparency=Transparency.FULL, duration=4 * HOUR, pseudonymous_ids=True, name="default")
     return replace(config, **overrides)
 
 
@@ -153,7 +158,7 @@ def small(**overrides) -> MarketConfig:
         AgentSpec(InformedTrader, count=1, collateral=80_000.0, private_signals=True),
         AgentSpec(CopyTrader, count=2, collateral=10_000.0),
     )
-    config = MarketConfig(agents=agents, duration=0.5 * HOUR, name="small")
+    config = MarketConfig(agents=agents, duration=0.5 * HOUR, pseudonymous_ids=True, name="small")
     return replace(config, **overrides)
 
 

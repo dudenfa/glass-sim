@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Every scenario now blinds agents to names: other accounts appear under
+  wallet-like hashed ids (`pseudonymous_ids=True`), as on a real transparent
+  exchange, so what an agent knows about another participant is only what
+  the transparency level reveals. Reports and the viewer still show the real
+  ids. Example 2 and tutorial 2 find "the crowd" from equity and leverage
+  instead of from a name prefix. Runs differ slightly from earlier versions
+  where agents broke ties by public id.
 - Fix: `PerpetualMarket.reset()` on a market built with ready-made `agents`
   re-used the same agent objects, whose internal state carried into the new
   session; it now raises and asks for a new market. A reset with a new seed

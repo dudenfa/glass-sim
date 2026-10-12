@@ -23,10 +23,13 @@ from glass_sim import (
 
 
 class FadeTheCrowd(Agent):
-    """Takes the opposite side of the aggregate retail position (needs FULL transparency).
+    """Takes the opposite side of the crowd's aggregate position (needs FULL transparency).
 
-    Under FULL transparency every account's position is public, so the agent
-    can add up what retail traders hold and bet against it.
+    Under FULL transparency every account's position, equity and leverage are
+    public, but names are not: other accounts appear under hashed ids, as on a
+    real transparent exchange. The agent therefore recognises the crowd by what
+    it can observe, small accounts running high leverage, and bets against
+    their net position.
     """
 
     agent_type = "crowd_fader"
@@ -39,9 +42,9 @@ class FadeTheCrowd(Agent):
     def on_wakeup(self, view, rng):
         if not view.can_see(Transparency.FULL):
             return []
-        retail_net = sum(a.position for a in view.accounts() if a.public_id.startswith("retail"))
+        crowd_net = sum(a.position for a in view.accounts() if a.equity < 25_000 and a.leverage >= 3)
         capacity = view.max_position(leverage=self.leverage)
-        target = -capacity if retail_net > 500 else capacity if retail_net < -500 else 0
+        target = -capacity if crowd_net > 500 else capacity if crowd_net < -500 else 0
         delta = target - view.position
         if delta == 0:
             return []

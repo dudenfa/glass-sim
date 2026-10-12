@@ -141,8 +141,13 @@ back above its maintenance margin is left alone.
 Agents always see their own account and orders. Asking for hidden information
 raises `TransparencyError`; `view.can_see(level)` lets an agent adapt.
 
-With `pseudonymous_ids=True`, public ids are wallet-like hashes, so agents
-cannot read another agent's type from its name.
+Other accounts appear under wallet-like hashed ids (`pseudonymous_ids=True`,
+on in every scenario), different for every seed, so an agent cannot read
+another agent's type from a name like `whale_01`: what it knows about another
+participant is only what the transparency level reveals about its orders,
+trades and positions, as on a real transparent exchange. The researcher always
+sees the real ids in results, reports and the viewer. Set
+`pseudonymous_ids=False` to show real ids to agents as well.
 
 **Private information** is separate from transparency. Agents created with
 `AgentSpec(private_signals=True)` receive, for each news item, a noisy estimate
@@ -234,7 +239,7 @@ List them with `python -m glass_sim scenarios`.
 | `transparency` | `Transparency` | ANONYMOUS, ATTRIBUTED or FULL |
 | `agents` | `tuple[AgentSpec]` | the population |
 | `duration`, `seed`, `record_interval` | | run length, seed, sampling of time series |
-| `pseudonymous_ids` | `bool` | hash public ids |
+| `pseudonymous_ids` | `bool` | show agents hashed public ids instead of names (on in every scenario) |
 
 All config objects are frozen dataclasses: derive variants with
 `dataclasses.replace`.

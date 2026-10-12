@@ -261,11 +261,23 @@ def test_full_market_shows_every_position():
     assert {a.public_id for a in view.accounts(include_self=True)} == {"a", "b"}
 
 
-def test_pseudonymous_ids_hide_agent_names():
-    m = PerpetualMarket(scenarios.small(seed=1, duration=60.0, pseudonymous_ids=True))
+@pytest.mark.parametrize("name", scenarios.names())
+def test_every_scenario_blinds_agents_to_names(name):
+    config = scenarios.get(name, seed=1, duration=60.0)
+    assert config.pseudonymous_ids
+    m = PerpetualMarket(config)
     public = {acc.public_id for acc in m.accounts.values()}
     assert all(p.startswith("0x") for p in public)
     assert len(public) == len(m.accounts)
+    assert not any(acc.public_id == acc.agent_id for acc in m.accounts.values())
+    result = m.run()
+    assert {a.agent_id for a in result.accounts} == set(m.accounts), "the researcher still gets the real ids"
+    assert "retail_01" in {row["agent_id"] for row in result.agent_table()}
+
+
+def test_pseudonymous_ids_can_be_switched_off():
+    m = PerpetualMarket(scenarios.small(seed=1, duration=60.0, pseudonymous_ids=False))
+    assert all(acc.public_id == acc.agent_id for acc in m.accounts.values())
 
 
 # ------------------------------------------------------------------- external

@@ -98,7 +98,7 @@ For horizons 10 s, 60 s and 300 s, computed on log returns of the last trade pri
 
 | field | meaning |
 |---|---|
-| `agent_id`, `public_id`, `agent_type` | internal id, id shown to other agents (hashed if `pseudonymous_ids`), type |
+| `agent_id`, `public_id`, `agent_type` | internal id, id shown to other agents (a hash under `pseudonymous_ids`, the default in every scenario), type |
 | `active` | still in the market |
 | `collateral` | cash: deposit + realized PnL - fees - funding paid |
 | `position` | signed contracts (long > 0) |
