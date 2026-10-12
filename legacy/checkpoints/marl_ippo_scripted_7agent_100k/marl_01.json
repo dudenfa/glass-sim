@@ -2,7 +2,7 @@
   "add_learning_agent": true,
   "algorithm": "maskable_ppo",
   "batch_size": 128,
-  "checkpoint": "/Users/dude/Desktop/uni/tirocinio/marl-trading/checkpoints/marl_ippo_scripted_7agent_100k/marl_01.zip",
+  "checkpoint": "legacy/checkpoints/marl_ippo_scripted_7agent_100k/marl_01.zip",
   "description": "Default balanced market with the current simulator settings.",
   "excluded_agent_ids": [],
   "fixed_order_quantity": 1,

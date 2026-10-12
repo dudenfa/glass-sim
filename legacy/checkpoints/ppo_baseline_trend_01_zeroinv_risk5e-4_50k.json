@@ -1,6 +1,6 @@
 {
   "batch_size": 128,
-  "checkpoint": "/Users/dude/Desktop/uni/tirocinio/marl-trading/checkpoints/ppo_baseline_trend_01_zeroinv_risk5e-4_50k.zip",
+  "checkpoint": "legacy/checkpoints/ppo_baseline_trend_01_zeroinv_risk5e-4_50k.zip",
   "description": "Default balanced market with the current simulator settings.",
   "device": "auto",
   "gamma": 0.99,

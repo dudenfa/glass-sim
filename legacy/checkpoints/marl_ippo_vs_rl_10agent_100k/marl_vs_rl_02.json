@@ -2,7 +2,7 @@
   "add_learning_agent": true,
   "algorithm": "maskable_ppo",
   "batch_size": 128,
-  "checkpoint": "/Users/dude/Desktop/uni/tirocinio/marl-trading/checkpoints/marl_ippo_vs_rl_10agent_100k/marl_vs_rl_02.zip",
+  "checkpoint": "legacy/checkpoints/marl_ippo_vs_rl_10agent_100k/marl_vs_rl_02.zip",
   "description": "Default balanced market with the current simulator settings.",
   "excluded_agent_ids": [],
   "fixed_order_quantity": 1,
@@ -11,21 +11,21 @@
     {
       "add_agent": true,
       "agent_id": "rl_01",
-      "checkpoint_path": "/Users/dude/Desktop/uni/tirocinio/marl-trading/checkpoints/maskableppo_baseline_trend_01_multiseed8_sellpressurev3_100k.zip",
+      "checkpoint_path": "legacy/checkpoints/maskableppo_baseline_trend_01_multiseed8_sellpressurev3_100k.zip",
       "starting_inventory": 16.0,
       "template_id": "trend_01"
     },
     {
       "add_agent": true,
       "agent_id": "rl_02",
-      "checkpoint_path": "/Users/dude/Desktop/uni/tirocinio/marl-trading/checkpoints/maskableppo_baseline_rl_02_vs_frozen_rl_01_v1_softinv_b_6agent_100k.zip",
+      "checkpoint_path": "legacy/checkpoints/maskableppo_baseline_rl_02_vs_frozen_rl_01_v1_softinv_b_6agent_100k.zip",
       "starting_inventory": 16.0,
       "template_id": "trend_01"
     },
     {
       "add_agent": true,
       "agent_id": "rl_03",
-      "checkpoint_path": "/Users/dude/Desktop/uni/tirocinio/marl-trading/checkpoints/maskableppo_baseline_rl_03_v2_vs_frozen_rl_01_v1_rl_02_softinv_b_endowed16_7agent_100k.zip",
+      "checkpoint_path": "legacy/checkpoints/maskableppo_baseline_rl_03_v2_vs_frozen_rl_01_v1_rl_02_softinv_b_endowed16_7agent_100k.zip",
       "starting_inventory": 16.0,
       "template_id": "trend_01"
     }

@@ -1,7 +1,7 @@
 {
   "algorithm": "maskable_ppo",
   "batch_size": 128,
-  "checkpoint": "/Users/dude/Desktop/uni/tirocinio/marl-trading/checkpoints/maskableppo_baseline_trend_01_phaseA_50k.zip",
+  "checkpoint": "legacy/checkpoints/maskableppo_baseline_trend_01_phaseA_50k.zip",
   "description": "Default balanced market with the current simulator settings.",
   "device": "auto",
   "fixed_order_quantity": 1,
