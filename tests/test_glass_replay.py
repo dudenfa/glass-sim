@@ -88,6 +88,17 @@ def test_agents_added_by_hand_are_rebuilt():
     assert_identical(result.replay, result)
 
 
+def test_hand_added_agents_replay_without_the_rl_extras(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "glass_sim.rl.policy", None)  # makes the import fail as it does without gymnasium
+    market = PerpetualMarket(small(seed=5, duration=120.0))
+    market.add_agent(MarketMaker(wake_interval=2.0), 100_000.0)
+    result = market.run()
+    assert result.replay is not None, result.replay_unavailable
+    assert_identical(result.replay, result)
+
+
 def test_builtin_policy_agent_is_rebuilt():
     pytest.importorskip("gymnasium")
     from glass_sim.rl.policy import PolicyAgent, RandomPolicy

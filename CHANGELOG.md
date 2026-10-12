@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix: saving a run that contains an agent added by hand failed without the
+  RL extras installed (the replay code imported the RL policy module, which
+  needs Gymnasium); such runs are now replayable with the core install, and
+  a replay that does contain an RL agent explains that it needs the extras.
 - Docs: the user guide states that the retail group loses money by design
   (typically 15–30% of its capital per 4-hour session); the docstring of
   `AccountView.max_additional_notional` says what it returns (margin

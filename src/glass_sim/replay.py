@@ -169,11 +169,20 @@ def decode(data: Any) -> Any:
 # =============================================================================
 
 
+def _policy_classes():
+    """The RL policy classes, or ``None`` when the RL extras are not installed (then no ``PolicyAgent`` can exist)."""
+    try:
+        from .rl.policy import HoldPolicy, ModelPolicy, PolicyAgent, RandomPolicy
+    except ImportError:
+        return None
+    return HoldPolicy, ModelPolicy, PolicyAgent, RandomPolicy
+
+
 def _agent_spec(agent: Agent) -> dict[str, Any]:
     """How to rebuild an agent added with ``add_agent``."""
-    from .rl.policy import HoldPolicy, ModelPolicy, PolicyAgent, RandomPolicy
-
-    if isinstance(agent, PolicyAgent):
+    classes = _policy_classes()
+    if classes is not None and isinstance(agent, classes[2]):
+        HoldPolicy, ModelPolicy, PolicyAgent, RandomPolicy = classes
         policy = agent.policy
         if isinstance(policy, ModelPolicy):
             policy_spec = {"model": str(policy.path.resolve()), "deterministic": bool(policy.deterministic)}
@@ -205,9 +214,12 @@ def _agent_spec(agent: Agent) -> dict[str, Any]:
 
 def _build_agent(spec: dict[str, Any]) -> Agent:
     if "policy_agent" in spec:
-        from .rl.actions import make_action_space
-        from .rl.observation import ObservationEncoder
-        from .rl.policy import HoldPolicy, ModelPolicy, PolicyAgent, RandomPolicy
+        try:
+            from .rl.actions import make_action_space
+            from .rl.observation import ObservationEncoder
+            from .rl.policy import HoldPolicy, ModelPolicy, PolicyAgent, RandomPolicy
+        except ImportError as exc:
+            raise ReplayError(f"this run contains an RL agent; replaying it needs the RL extras (pip install glass-sim[rl]): {exc}") from exc
 
         p = spec["policy_agent"]
         policy_spec = p["policy"]
