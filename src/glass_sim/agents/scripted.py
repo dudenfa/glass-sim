@@ -682,6 +682,14 @@ class LiquidationHunter(Agent):
     the cascade closes its position at a profit. Unfilled positions are closed
     gradually after ``max_hold`` seconds. In less transparent markets it cannot
     see liquidation prices and stays idle.
+
+    Because the rule is economic, the hunter is mostly quiet in calm markets:
+    makers and arbitrageurs absorb a push, and a trader at 20x is liquidated
+    about 3.75% away, outside the default ``search_bps`` band, so only the
+    most levered accounts are ever in reach. It hunts about once per 4-hour
+    session in the reference ecology (or not at all) and several times in the
+    ``volatile`` scenario. That is intended: hunting pays in thin, volatile
+    moments, and the thresholds are deliberately not tuned to make it trade.
     """
 
     agent_type = "liquidation_hunter"

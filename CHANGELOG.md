@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Docs: the liquidation hunter is described as what it is, an economic rule
+  that fires rarely in calm markets and several times in the `volatile`
+  scenario, rather than an always-active strategy.
 - Every scenario now blinds agents to names: other accounts appear under
   wallet-like hashed ids (`pseudonymous_ids=True`), as on a real transparent
   exchange, so what an agent knows about another participant is only what

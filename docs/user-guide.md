@@ -218,7 +218,7 @@ Always use the `rng` argument for randomness, never the global generators.
 | `Whale` | 1 | multi-hour accumulation and unwind campaigns executed with TWAP child orders |
 | `FlowFollower` | 3 | ATTRIBUTED or FULL: follows the account with the strongest one-directional flow on the attributed trade tape (wallet watching) |
 | `CopyTrader` | 6 | FULL only: mirrors the most profitable visible account taking leveraged directional risk |
-| `LiquidationHunter` | 1 | FULL only: pushes the price into visible liquidation clusters when the forced flow outweighs the cost of the push |
+| `LiquidationHunter` | 1 | FULL only: pushes the price into visible liquidation clusters when the forced flow outweighs the cost of the push. Its rule is economic, so it acts rarely: in the reference ecology, where makers and arbitrageurs anchor the price and most retail liquidation levels lie outside its search band, it hunts about once per 4-hour session or not at all; in `volatile` it hunts several times. |
 
 Other scenarios change one thing at a time: `anonymous`, `attributed`, `calm`,
 `volatile`, `retail_frenzy`, `no_arbitrage`, plus `small` for fast tests.
