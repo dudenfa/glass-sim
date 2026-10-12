@@ -194,6 +194,20 @@ def test_same_seed_same_result_and_different_seed_differs():
     assert _fingerprint(a) != _fingerprint(c)
 
 
+def test_reset_rebuilds_a_spec_market_and_refuses_explicit_agents():
+    market = PerpetualMarket(scenarios.small(seed=5, duration=300.0))
+    market.run()
+    market.reset(seed=6)
+    assert market.seed == 6 and market.config.seed == 6 and market.time == 0.0
+    again = market.run()
+    fresh = PerpetualMarket(scenarios.small(seed=6, duration=300.0)).run()
+    assert _fingerprint(again) == _fingerprint(fresh), "a reset market behaves like a new one with that seed"
+    assert again.replay is not None and again.replay.config.seed == 6
+    explicit = bare_market({"a": 1_000.0})
+    with pytest.raises(RuntimeError, match="explicit agents"):
+        explicit.reset(seed=2)
+
+
 def test_exogenous_path_is_shared_across_treatments():
     full = PerpetualMarket(scenarios.small(seed=3, duration=600.0, transparency=Transparency.FULL)).run()
     anon = PerpetualMarket(scenarios.small(seed=3, duration=600.0, transparency=Transparency.ANONYMOUS)).run()

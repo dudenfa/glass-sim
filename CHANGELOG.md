@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix: `PerpetualMarket.reset()` on a market built with ready-made `agents`
+  re-used the same agent objects, whose internal state carried into the new
+  session; it now raises and asks for a new market. A reset with a new seed
+  also updates the configuration, so results and replays report that seed.
 - Fix: when several accounts were liquidated in the same pass of a cascade,
   all of them were priced at the mark from before the pass; each forced
   close, its penalty and any auto-deleveraging now use the mark as moved by

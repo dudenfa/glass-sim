@@ -107,14 +107,30 @@ class PerpetualMarket:
         self._mmr = config.contract.mmr
         self.keep_order_events = keep_order_events
         self._explicit_agents = list(agents) if agents is not None else None
+        self._constructed = False
         self.reset(config.seed)
+        self._constructed = True
 
     # ================================================================ setup
 
     def reset(self, seed: Optional[int] = None) -> None:
-        """Rebuild the market from its configuration (optionally with a new seed)."""
+        """Rebuild the market from its configuration (optionally with a new seed).
+
+        Only markets built from ``config.agents`` can be reset: their agents are
+        created afresh from the specs. A market given ready-made ``agents``
+        cannot be, because those objects keep state (a whale's campaign, a
+        trader's exit time) that would carry into the new session; build a new
+        ``PerpetualMarket`` instead.
+        """
+        if self._explicit_agents is not None and self._constructed:
+            raise RuntimeError("a market built with explicit agents cannot be reset: their state would carry over; create a new PerpetualMarket instead")
+        if seed is not None and int(seed) != self.config.seed:
+            # Keep the configuration truthful: results and replays read the seed from it.
+            from dataclasses import replace
+
+            self.config = replace(self.config, seed=int(seed))
         config = self.config
-        self.seed = int(config.seed if seed is None else seed)
+        self.seed = int(config.seed)
         root = np.random.SeedSequence(self.seed)
         exo_index, exo_news, exo_signals, setup = root.spawn(4)
         self._index_rng = np.random.default_rng(exo_index)
