@@ -44,11 +44,17 @@
       </label>
     </div>
     <div class="clock">
+      <span id="mode-badge" class="mode-badge hidden">REPLAY</span>
       <span id="clock">00:00:00</span>
-      <div class="progress"><div id="progress-bar"></div></div>
+      <div class="progress" id="progress" title="Click to jump to a time"><div id="progress-bar"></div></div>
       <span class="muted" id="duration">/ 04:00:00</span>
     </div>
-    <div class="group">
+    <div class="group hidden" id="replay-group">
+      <span class="muted" id="replay-desc"></span>
+      <span id="replay-status"></span>
+      <button id="btn-restart">↺ Restart replay</button>
+    </div>
+    <div class="group" id="session-group">
       <label>Scenario <select id="scenario"></select></label>
       <label>Agents see
         <select id="transparency">

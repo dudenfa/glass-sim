@@ -13,6 +13,8 @@ from .account import AccountSnapshot
 from .analysis import market_summary, stylized_facts
 from .config import MarketConfig
 from .recorder import Recorder
+from .replay import FILE_NAME as REPLAY_FILE
+from .replay import Replay, ReplayUnavailable
 from .report import format_report
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -33,10 +35,16 @@ class SimulationResult:
     conservation_error: float
     events_processed: int
     order_event_counts: dict[str, int] = field(default_factory=dict)
+    replay: Optional[Replay] = None
+    replay_unavailable: Optional[str] = None
 
     @classmethod
     def from_market(cls, market: PerpetualMarket) -> SimulationResult:
-        """Snapshot a market (finished or not)."""
+        """Snapshot a market (finished or not), with the replay that rebuilds it when possible."""
+        try:
+            replay, reason = market.replay(), None
+        except ReplayUnavailable as exc:
+            replay, reason = None, str(exc)
         return cls(
             config=market.config,
             seed=market.seed,
@@ -48,6 +56,8 @@ class SimulationResult:
             conservation_error=market.conservation_error(),
             events_processed=market.events_processed,
             order_event_counts=dict(market.recorder.order_event_counts),
+            replay=replay,
+            replay_unavailable=reason,
         )
 
     # ------------------------------------------------------------ metrics
@@ -126,9 +136,11 @@ class SimulationResult:
         print(self.report(agents=agents))
 
     def save(self, directory: Union[str, Path]) -> Path:
-        """Write report.txt, summary/agents/groups/stylized-facts JSON and CSV time series (if pandas is available)."""
+        """Write report.txt, summary/agents/groups/stylized-facts JSON, replay.json (when the run is replayable) and CSV time series (if pandas is available)."""
         path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
+        if self.replay is not None:
+            self.replay.save(path / REPLAY_FILE)
         (path / "report.txt").write_text(self.report(agents=True) + "\n")
         (path / "summary.json").write_text(json.dumps(self.summary(), indent=2, default=str))
         (path / "stylized_facts.json").write_text(json.dumps(self.stylized_facts(), indent=2))
@@ -186,6 +198,7 @@ class SavedRun:
     agents: list[dict[str, Any]]
     groups: list[dict[str, Any]]
     source: str
+    replay_path: Optional[str] = None
 
     @classmethod
     def load(cls, directory: Union[str, Path]) -> SavedRun:
@@ -197,4 +210,5 @@ class SavedRun:
             agents=agents,
             groups=group_table(agents),
             source=str(path),
+            replay_path=str(path / REPLAY_FILE) if (path / REPLAY_FILE).exists() else None,
         )

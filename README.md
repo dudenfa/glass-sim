@@ -40,12 +40,15 @@ and fair controls.
   statistics, text reports, run and seed-panel comparisons, pandas export.
 - **Live viewer**: candles, book with owners, trade tape, positions,
   liquidations, funding and market quality, all in the browser.
+- **Exact replays**: every saved run includes a few-kilobyte replay file that
+  rebuilds it event for event (including RL episodes and interventions); open
+  it in the viewer, jump to any moment, or share it.
 - **Reinforcement learning**: Gymnasium environment with action masks and an
   exit-value reward, MaskablePPO training, held-out evaluation against random,
   hold and scripted market-maker controls, an independent-PPO multi-agent
   trainer, a PettingZoo environment for other MARL libraries, and pluggable
   observation, action and reward components.
-- **Validated**: an accounting invariant checked every simulated second, 73
+- **Validated**: an accounting invariant checked every simulated second, 88
   tests, and heavy tails and volatility clustering in the generated prices.
 - **Fast**: 4 simulated hours with 88 agents (about 130,000 events) in roughly
   5 seconds on a laptop; the core depends only on NumPy.
@@ -71,6 +74,8 @@ glass run --scenario default --seed 1 --agents    # 4 simulated hours, full repo
 glass serve --open                                # live viewer at http://127.0.0.1:8766
 glass compare "scenario=default seed=1" "scenario=default seed=1 transparency=anonymous"
 glass compare "scenario=default" "scenario=anonymous" --seeds 1-10   # paired seed panel
+glass run --scenario volatile --seed 2 --out runs/volatile_s2        # save a run (with replay.json)
+glass serve --replay runs/volatile_s2                                 # play it back, jump to any moment
 ```
 
 ```python
@@ -175,6 +180,7 @@ src/glass_sim/        the package
   agents/             Agent base class, ExternalAgent, nine scripted traders
   scenarios.py        ready-made populations
   results.py, analysis.py, report.py, compare.py   metrics, stylized facts, reports, comparisons
+  replay.py           exact replays of saved runs
   rl/                 observation, actions, reward, Gymnasium and PettingZoo envs, training, evaluation, MARL
   live/               browser viewer (session, HTTP server, static web app)
   __main__.py         the `glass` command line

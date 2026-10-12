@@ -213,6 +213,23 @@ function renderControls(st) {
   $("btn-reset").classList.toggle("primary", S.pendingSession);
   $("btn-reset").textContent = S.pendingSession ? "↺ Start new session" : "↺ New session";
   if (document.activeElement !== $("speed")) $("speed").value = String(s.speed);
+  // Replay mode: the run is fixed, so the new-session form gives way to the replay's description and check.
+  const replay = s.mode === "replay";
+  $("mode-badge").classList.toggle("hidden", !replay);
+  $("session-group").classList.toggle("hidden", replay);
+  $("replay-group").classList.toggle("hidden", !replay);
+  if (replay) {
+    $("replay-desc").textContent = s.replay.description;
+    const v = s.replay.verification;
+    if (!v) {
+      $("replay-status").innerHTML = `<span class="muted">checked against the original at the end</span>`;
+    } else if (v.identical) {
+      $("replay-status").innerHTML = `<span class="pos">✓ identical to the original run</span>`;
+    } else {
+      const keys = Object.keys(v.differences).join(", ");
+      $("replay-status").innerHTML = `<span class="neg" title="recorded with GLASS ${v.recorded_with}, replayed with ${v.replayed_with}">✗ differs from the original (${keys})</span>`;
+    }
+  }
   const note = {
     full: "agents see owners, positions and liquidation prices",
     attributed: "agents see order owners, not positions",
@@ -802,6 +819,14 @@ function setup() {
     control("reset", { scenario: $("scenario").value, transparency: $("transparency").value, seed: Number($("seed").value) });
   };
   $("btn-reset").addEventListener("click", startSession);
+  $("btn-restart").addEventListener("click", () => control("reset"));
+  $("progress").addEventListener("click", (e) => {
+    if (!S.state) return;
+    const box = e.currentTarget.getBoundingClientRect();
+    const fraction = Math.min(1, Math.max(0, (e.clientX - box.left) / box.width));
+    $("clock").textContent = "seeking…";
+    control("seek", { time: fraction * S.state.session.duration });
+  });
   for (const id of ["scenario", "transparency", "seed"]) {
     $(id).addEventListener("input", () => { S.pendingSession = true; renderControls(S.state); });
     $(id).addEventListener("change", () => { S.pendingSession = true; renderControls(S.state); });

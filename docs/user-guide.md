@@ -277,6 +277,55 @@ glass compare "scenario=default" "scenario=anonymous" --seeds 1-10 --out compari
 In Python: `glass_sim.compare.compare_runs(left, right)` and
 `compare_panels(left_spec, right_spec, seeds)`.
 
+### Saving and replaying runs
+
+`result.save(directory)` also writes `replay.json`, a few kilobytes that
+rebuild the run exactly. GLASS is deterministic, so the file stores the
+recipe, not the states:
+
+- the full `MarketConfig` (population, every parameter, the seed);
+- agents added by hand with `add_agent` (by class and constructor arguments,
+  or by checkpoint path for trained RL agents);
+- every call made from outside the simulation, tied to the exact event at
+  which it happened: decisions sent with `act()` (so Gymnasium and PettingZoo
+  episodes replay too), `execute()` and `shock_index()`;
+- a fingerprint of the final state, used to check the replay.
+
+```python
+from glass_sim import PerpetualMarket, Replay, scenarios
+
+result = PerpetualMarket(scenarios.default(seed=1)).run()
+result.save("runs/default_s1")
+
+replay = Replay.load("runs/default_s1")      # or a replay.json file
+again = replay.run()                         # the identical SimulationResult
+replay.verify(again)                         # {"identical": True, "differences": {}, ...}
+
+run = replay.build()                         # step through it yourself
+run.run_until(1800)                          # the market at 30 minutes: run.market
+```
+
+From the command line, `glass serve --replay runs/default_s1` plays the run
+back in the viewer, and `glass replay runs/default_s1` re-runs it and checks
+that it is identical (exit code 1 if not). `glass run --out` saves a replay
+too. A saved episode works the same way: `env.market.results().save(...)` after
+an episode of `PerpTradingEnv`, or `env.market.replay()` for the file alone.
+
+What a replay needs:
+
+- agent classes must be importable. Agents defined in a notebook or in the
+  script that runs the simulation (module `__main__`) cannot be referenced;
+  such runs have `result.replay = None` and `result.replay_unavailable`
+  explains why. Move the class to a module to replay them;
+- trained RL agents are referenced by checkpoint path, which must exist where
+  the replay is loaded;
+- the same GLASS version: a different version can change the simulation, and
+  the verification then reports which numbers differ.
+
+Loading a replay file never runs arbitrary code: agent classes are accepted
+only if they are `Agent` subclasses, and every other object must come from
+GLASS itself, so replay files can be shared safely.
+
 ## Live viewer
 
 ```bash
@@ -293,8 +342,12 @@ Opens http://127.0.0.1:8766 with:
   type, liquidations, funding history, news, order flow, live market-quality
   and stylized-fact statistics, and an explanation of the mechanics;
 - click any account for its equity curve, position, parameters, orders and fills;
-- controls: play/pause (space bar), step, run to end, speed, and a new session
-  with another scenario, transparency level or seed.
+- controls: play/pause (space bar), step, run to end, speed, a timeline you
+  can click to jump to any moment, and a new session with another scenario,
+  transparency level or seed;
+- replay mode: `glass serve --replay runs/my_run` plays back a saved run (see
+  [Saving and replaying runs](#saving-and-replaying-runs)) with the same
+  controls; at the end it shows whether the playback matched the original.
 
 The researcher always sees everything. The viewer states what the **agents**
 can see at the current transparency level.

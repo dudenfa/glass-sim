@@ -42,7 +42,8 @@ from .config import (
 )
 from .market import PerpetualMarket
 from .processes import NewsItem, PrivateSignal
-from .results import SimulationResult
+from .replay import Replay, ReplayUnavailable
+from .results import SavedRun, SimulationResult
 from .types import (
     Action,
     Cancel,
@@ -89,6 +90,9 @@ __all__ = [
     "NoiseTrader",
     "PerpetualMarket",
     "PrivateSignal",
+    "Replay",
+    "ReplayUnavailable",
+    "SavedRun",
     "Side",
     "SimulationResult",
     "TimeInForce",

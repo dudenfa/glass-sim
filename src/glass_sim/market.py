@@ -36,7 +36,7 @@ from collections import deque
 from collections.abc import Callable, Iterable, Sequence
 from itertools import count
 from statistics import median
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
@@ -170,6 +170,11 @@ class PerpetualMarket:
         self._finished = False
         self.liquidation_count = 0
         self.events_processed = 0
+        # What a replay needs beyond the config: agents not built from ``config.agents``
+        # and every outside call (act, execute, shock_index), in order (see ``replay.py``).
+        self.added_agents: list[dict[str, Any]] = []
+        self.control_log: list[dict[str, Any]] = []
+        self._building_from_specs = False
 
         if self._explicit_agents is not None:
             for agent, collateral in self._explicit_agents:
@@ -180,6 +185,7 @@ class PerpetualMarket:
     def _build_agents_from_specs(self, specs: Iterable[AgentSpec]) -> None:
         """Instantiate ``AgentSpec`` groups, sampling randomized parameters and collateral from the setup stream."""
         used_prefix_counts: dict[str, int] = {}
+        self._building_from_specs = True
         for spec in specs:
             prefix = spec.prefix or getattr(spec.agent, "default_prefix", "agent")
             for _ in range(spec.count):
@@ -196,6 +202,7 @@ class PerpetualMarket:
                 agent.agent_id = agent_id
                 collateral = sample_collateral(spec.collateral, self._setup_rng)
                 self.add_agent(agent, collateral, private_signals=spec.private_signals, external=spec.external)
+        self._building_from_specs = False
 
     def add_agent(self, agent: Agent, collateral: float, *, private_signals: bool = False, external: bool = False) -> None:
         """Add a participant. Must be called before the simulation starts."""
@@ -226,6 +233,8 @@ class PerpetualMarket:
             self._signal_subscribers.add(agent_id)
         if external or (isinstance(agent, ExternalAgent) and agent.policy is None):
             self._external_ids.add(agent_id)
+        if not self._building_from_specs:
+            self.added_agents.append({"agent": agent, "collateral": float(collateral), "private_signals": private_signals, "external": external})
 
     def _make_public_id(self, agent_id: str) -> str:
         """Wallet-like hash per seed, so agents cannot infer a type from a name like ``whale_01``."""
@@ -342,6 +351,16 @@ class PerpetualMarket:
                 next_report += self.config.duration / 100.0
         return SimulationResult.from_market(self)
 
+    def _log_control(self, kind: str, **details: Any) -> None:
+        """Record an outside call with the exact point (event count and time) at which it happened."""
+        self.control_log.append({"kind": kind, "events": self.events_processed, "time": self.time, **details})
+
+    def replay(self):
+        """A ``Replay`` that rebuilds this run exactly (raises ``ReplayUnavailable`` with the reason if it cannot)."""
+        from .replay import Replay
+
+        return Replay.from_market(self)
+
     def run_until_decision(self) -> Optional[str]:
         """Advance until an external agent must decide. Returns its id, or ``None`` at the end."""
         while not self._finished and self._pending_decision is None:
@@ -352,6 +371,7 @@ class PerpetualMarket:
         """Answer a pending external decision."""
         if self._pending_decision != agent_id:
             raise RuntimeError(f"no pending decision for {agent_id}")
+        self._log_control("act", agent_id=agent_id, actions=list(actions))
         self._pending_decision = None
         self._send(agent_id, actions)
         self._push(self.time + self.agents[agent_id].next_wakeup_delay(self._agent_rngs[agent_id]), _P_WAKEUP, "wakeup", agent_id)
@@ -363,6 +383,7 @@ class PerpetualMarket:
         order at a chosen time). Normal agents act through their wakeups.
         """
         self._start()
+        self._log_control("execute", agent_id=agent_id, actions=list(actions))
         for action in actions:
             self._process_action(agent_id, action)
         self._after_market_change()
@@ -370,6 +391,7 @@ class PerpetualMarket:
     def shock_index(self, log_jump: float, headline: str = "Exogenous shock") -> None:
         """Apply an immediate exogenous jump to the index price (a controlled experiment)."""
         self._start()
+        self._log_control("shock", log_jump=float(log_jump), headline=headline)
         self.index_price = self.index.jump(log_jump)
         self.recorder.news.append(NewsRecord(time=self.time, headline=headline, log_jump=log_jump))
         self._after_market_change()

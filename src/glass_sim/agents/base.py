@@ -43,6 +43,13 @@ class Agent:
     agent_type: str = "agent"
     default_prefix: str = "agent"
 
+    def __new__(cls, *args, **kwargs):
+        # Remember the constructor arguments so a saved run can rebuild an agent
+        # that was added by hand (see ``replay.py``).
+        agent = super().__new__(cls)
+        agent._init_args = (args, kwargs)
+        return agent
+
     def __init__(self, wake_interval: float = 10.0) -> None:
         if wake_interval <= 0:
             raise ValueError("wake_interval must be positive")

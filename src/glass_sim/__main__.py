@@ -13,6 +13,9 @@ Examples::
     python -m glass_sim evaluate checkpoints/ppo_full_v1 --seeds 31-40
     python -m glass_sim serve --rl checkpoints/ppo_full_v1
 
+    python -m glass_sim serve --replay artifacts/default_s1   # play back a saved run
+    python -m glass_sim replay artifacts/default_s1           # re-run it and check it is identical
+
 (``glass`` is the same command once the package is installed.)
 """
 
@@ -61,6 +64,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.out:
         path = result.save(args.out)
         print(f"results written to {path} (report.txt has the full per-agent table)")
+        if result.replay is not None:
+            print(f"replay saved: glass serve --replay {path}")
+        else:
+            print(f"no replay file: {result.replay_unavailable}")
     if args.json:
         print(json.dumps(result.summary(), indent=2, default=str))
     return 0
@@ -72,9 +79,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     duration = parse_duration(args.duration) if args.duration else None
     checkpoints = [str(path if str(path).endswith(".zip") else f"{path}/model.zip") for path in args.rl]
-    session = LiveSession(
-        scenario=args.scenario, seed=args.seed, transparency=args.transparency, speed=args.speed, duration=duration, rl_checkpoints=checkpoints
-    )
+    if args.replay:
+        from .replay import Replay
+
+        replay = Replay.load(args.replay)
+        print(f"replaying {replay.describe()}")
+        session = LiveSession(speed=args.speed, replay=replay)
+    else:
+        session = LiveSession(
+            scenario=args.scenario, seed=args.seed, transparency=args.transparency, speed=args.speed, duration=duration, rl_checkpoints=checkpoints
+        )
     session.playing = not args.paused
     viewer = FuturesViewer(session, host=args.host, port=args.port)
     print(f"Futures market viewer on {viewer.url}  (Ctrl+C to stop)")
@@ -83,6 +97,28 @@ def cmd_serve(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         pass
     return 0
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    """Re-run a saved run from its replay file and check that it is identical."""
+    from .replay import Replay
+
+    replay = Replay.load(args.path)
+    print(f"replaying {replay.describe()}")
+    started = time.perf_counter()
+    result = replay.run()
+    check = replay.verify(result)
+    if args.report:
+        result.print_report(agents=args.agents)
+    status = "identical to the original run" if check["identical"] else "DIFFERENT from the original run"
+    print(f"\nreplayed {result.events_processed:,} events in {time.perf_counter() - started:.1f}s: {status}")
+    for key, diff in check["differences"].items():
+        print(f"  {key}: original {diff['original']}, replay {diff['replay']}")
+    if not check["identical"] and check["recorded_with"] != check["replayed_with"]:
+        print(f"  recorded with GLASS {check['recorded_with']}, replayed with {check['replayed_with']}: differences can come from the version change")
+    if args.out:
+        print(f"results written to {result.save(args.out)}")
+    return 0 if check["identical"] else 1
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -136,7 +172,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     serve.add_argument("--paused", action="store_true")
     serve.add_argument("--open", action="store_true", help="open the browser")
     serve.add_argument("--rl", action="append", default=[], metavar="RUN_DIR_OR_ZIP", help="add a trained RL agent (repeatable); shown as rl_01, rl_02, ...")
+    serve.add_argument(
+        "--replay", default=None, metavar="RUN_DIR_OR_FILE", help="play back a saved run (a directory written by --out / result.save, or a replay.json)"
+    )
     serve.set_defaults(func=cmd_serve)
+
+    replay = sub.add_parser("replay", help="re-run a saved run from its replay file and check it is identical")
+    replay.add_argument("path", help="a saved run directory (with replay.json) or a replay file")
+    replay.add_argument("--report", action="store_true", help="print the report of the replayed run")
+    replay.add_argument("--agents", action="store_true", help="with --report, also print the per-agent table")
+    replay.add_argument("--out", default=None, help="save the replayed run to this directory")
+    replay.set_defaults(func=cmd_replay)
 
     compare = sub.add_parser("compare", help="compare two runs, or two setups over a panel of seeds")
     compare.add_argument("left", help='run spec like "scenario=default seed=1 transparency=full duration=1h", or a saved run directory')

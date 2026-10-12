@@ -3,6 +3,11 @@
 The session owns a ``PerpetualMarket`` and advances it in a background thread
 at ``speed`` simulated seconds per real second. All access goes through a lock
 so the HTTP handlers always see a consistent market.
+
+With ``replay`` the session plays back a saved run (see ``replay.py``) instead
+of a new market: the same controls work, and at the end the session checks
+that the playback reproduced the original run. Because runs are deterministic,
+seeking backwards rebuilds the market and replays it up to the requested time.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from .. import scenarios
 from ..analysis import market_summary, stylized_facts
 from ..config import MarketConfig, format_time
 from ..market import PerpetualMarket
+from ..replay import Replay, ReplayRun
 from ..types import Side, Transparency
 
 
@@ -41,6 +47,7 @@ class LiveSession:
         duration: Optional[float] = None,
         config: Optional[MarketConfig] = None,
         rl_checkpoints: Optional[list[str]] = None,
+        replay: Optional[Replay] = None,
     ) -> None:
         self.lock = threading.RLock()
         self.speed = float(speed)
@@ -51,6 +58,10 @@ class LiveSession:
         self._summary_time = -1.0
         self._custom_config = config
         self.rl_checkpoints = list(rl_checkpoints or [])
+        self.replay = replay
+        self.runner: Optional[ReplayRun] = None
+        self.verification: Optional[dict[str, Any]] = None
+        self.replay_description = replay.describe() if replay is not None else None
         self.scenario = scenario
         self.duration = duration
         self._build(scenario, seed, transparency)
@@ -59,6 +70,15 @@ class LiveSession:
 
     def _build(self, scenario: str, seed: int, transparency: Optional[str]) -> None:
         """Create a fresh market (and optional RL participants) for a scenario, seed and transparency level."""
+        self._settings = (scenario, seed, transparency)
+        self._summary_time = -1.0
+        if self.replay is not None:
+            self.runner = self.replay.build()
+            self.market = self.runner.market
+            self.scenario = self.market.config.name
+            self.verification = None
+            self.runner.run_until(0.0)
+            return
         overrides: dict[str, Any] = {"seed": int(seed)}
         if self.duration is not None:
             overrides["duration"] = float(self.duration)
@@ -100,16 +120,20 @@ class LiveSession:
             elapsed = now - last
             last = now
             with self.lock:
-                if self.playing and not self.market.finished:
-                    target = min(self.market.time + elapsed * self.speed, self.market.config.duration)
+                if self.playing and not self.finished:
+                    target = min(self.market.time + elapsed * self.speed, self.duration_seconds)
                     self._advance_to(target, budget=0.25)
-                    if self.market.finished:
+                    if self.finished:
                         self.playing = False
             wallclock.sleep(tick)
 
     def _advance_to(self, target: float, budget: float) -> None:
         """Advance the market toward ``target`` but never hold the lock longer than ``budget`` seconds."""
         deadline = wallclock.perf_counter() + budget
+        if self.runner is not None:
+            self.runner.run_until(target, deadline)
+            self._check_replay()
+            return
         market = self.market
         while not market.finished and market._queue and market._queue[0][0] <= target:
             market.step()
@@ -117,6 +141,27 @@ class LiveSession:
                 return
         if not market.finished:
             market.time = max(market.time, target)
+
+    @property
+    def finished(self) -> bool:
+        """End of the session: the market's end, or the point where a replayed run was saved."""
+        return self.runner.done if self.runner is not None else self.market.finished
+
+    @property
+    def duration_seconds(self) -> float:
+        return self.runner.end_time if self.runner is not None else self.market.config.duration
+
+    def _check_replay(self) -> None:
+        """Once a replay is complete, compare it with the original run (once)."""
+        if self.runner is not None and self.runner.done and self.verification is None:
+            self.verification = self.runner.verify()
+
+    def _seek(self, target: float) -> None:
+        """Jump to simulated ``target``: forward by running, backward by rebuilding and replaying (runs are deterministic)."""
+        target = min(max(0.0, target), self.duration_seconds)
+        if target < self.market.time:
+            self._build(*self._settings)
+        self._advance_to(target, budget=120.0)
 
     # --------------------------------------------------------------- controls
 
@@ -134,10 +179,21 @@ class LiveSession:
                 self._advance_to(self.market.time + seconds, budget=10.0)
             elif action == "finish":
                 self.playing = False
-                while not self.market.finished:
-                    self.market.step()
+                if self.runner is not None:
+                    while self.runner.step():
+                        pass
+                    self._check_replay()
+                else:
+                    while not self.market.finished:
+                        self.market.step()
+            elif action == "seek":
+                self.playing = False
+                self._seek(float(payload.get("time", self.market.time)))
             elif action == "speed":
                 self.speed = max(0.1, float(payload.get("speed", self.speed)))
+            elif action == "reset" and self.replay is not None:
+                self.playing = False
+                self._build(*self._settings)
             elif action == "reset":
                 self.playing = False
                 self._build(
@@ -311,11 +367,15 @@ class LiveSession:
                     "scenarios": scenarios.names(),
                     "seed": market.seed,
                     "playing": self.playing,
-                    "finished": market.finished,
+                    "finished": self.finished,
+                    "mode": "replay" if self.replay is not None else "live",
+                    "replay": None
+                    if self.replay is None
+                    else {"description": self.replay_description, "source": self.replay.source, "verification": self.verification},
                     "speed": self.speed,
                     "time": round(market.time, 3),
                     "clock": format_time(market.time),
-                    "duration": config.duration,
+                    "duration": self.duration_seconds,
                     "transparency": config.transparency.value,
                     "symbol": config.contract.symbol,
                     "tick_size": config.contract.tick_size,

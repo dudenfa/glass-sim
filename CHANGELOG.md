@@ -13,6 +13,13 @@
   terminations and pluggable components; passes PettingZoo's API and seed
   tests. PettingZoo joins the `rl` extra. New example `05_pettingzoo.py`.
 - `MultiAgentMarket` accepts custom encoder, action menu and reward.
+- Exact replays: `result.save()` writes `replay.json` (the configuration,
+  agents added by hand, every outside call such as `act()`, `execute()` and
+  `shock_index()`, and a fingerprint of the final state). `Replay.load(...)`
+  rebuilds the run event for event and verifies it; `glass serve --replay`
+  plays it back in the viewer and `glass replay` re-runs and checks it.
+  Loading never builds objects outside GLASS other than `Agent` subclasses.
+- Viewer: click the timeline to jump to any moment (live sessions and replays).
 - Tutorial notebooks (`notebooks/`): a first market, agents and paired
   experiments, reinforcement learning; saved with outputs. New `notebooks`
   install extra.

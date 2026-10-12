@@ -48,7 +48,9 @@ label { color: var(--muted); display: inline-flex; gap: 6px; align-items: center
 .controls { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 8px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .controls .group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .clock { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 13px; }
-.progress { width: 180px; height: 5px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.progress { width: 220px; height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; cursor: pointer; }
+.progress:hover { outline: 1px solid var(--accent); }
+.mode-badge { background: var(--accent); color: #0b0e14; border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; }
 #progress-bar { height: 100%; width: 0; background: var(--accent); }
 
 /* ------------------------------------------------------------------ panels */
