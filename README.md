@@ -14,8 +14,8 @@ interaction rather than from replayed data. Its distinguishing feature is that
 trade on an anonymous exchange, on a venue where every order and trade carries
 its owner, or on a fully transparent on-chain book where every account's
 position and liquidation price is public, as on Hyperliquid. The package ships
-nine scripted trader types, a live browser viewer, a Gymnasium environment, a
-multi-agent PPO trainer and an evaluation protocol with paired held-out seeds
+nine scripted trader types, a live browser viewer, Gymnasium and PettingZoo
+environments, a multi-agent PPO trainer and an evaluation protocol with paired held-out seeds
 and fair controls.
 
 ![A simulated 4-hour session: perpetual and index price with news and liquidations](docs/assets/session.png)
@@ -42,9 +42,10 @@ and fair controls.
   liquidations, funding and market quality, all in the browser.
 - **Reinforcement learning**: Gymnasium environment with action masks and an
   exit-value reward, MaskablePPO training, held-out evaluation against random,
-  hold and scripted market-maker controls, and an independent-PPO multi-agent
-  trainer.
-- **Validated**: an accounting invariant checked every simulated second, 56
+  hold and scripted market-maker controls, an independent-PPO multi-agent
+  trainer, a PettingZoo environment for other MARL libraries, and pluggable
+  observation, action and reward components.
+- **Validated**: an accounting invariant checked every simulated second, 69
   tests, and heavy tails and volatility clustering in the generated prices.
 - **Fast**: 4 simulated hours with 88 agents (about 130,000 events) in roughly
   5 seconds on a laptop; the core depends only on NumPy.
@@ -60,7 +61,7 @@ pip install -e ".[all]"       # simulator + RL (PyTorch via Stable-Baselines3) +
 
 `pip install -e ".[dev]"` installs the simulator and the test tools only;
 `.[analysis]` adds pandas and matplotlib, `.[rl]` adds Gymnasium,
-Stable-Baselines3 and sb3-contrib.
+Stable-Baselines3, sb3-contrib and PettingZoo.
 
 ## Quick start
 
@@ -150,7 +151,13 @@ The learner observes 32 scaled features (market state, own account and a
 transparency block that is zero when hidden), chooses among 9 masked actions,
 and is rewarded by the change of its account's *exit value*: what the account
 would be worth if the position were closed against the real book, so costs and
-illiquidity are visible immediately. Details in the
+illiquidity are visible immediately. A richer "ladder" action menu
+(`--actions ladder`) and your own observation, actions or reward can be
+plugged in without editing the library.
+
+To use another MARL library, `glass_sim.rl.pettingzoo_env.GlassAECEnv` exposes
+several learners in one market through the PettingZoo AEC API (see
+[`examples/05_pettingzoo.py`](examples/05_pettingzoo.py)). Details in the
 [user guide](docs/user-guide.md#driving-agents-from-outside-rl).
 
 ## Project structure

@@ -45,6 +45,7 @@ from ..config import AgentSpec, parse_duration
 from ..market import PerpetualMarket
 from ..types import Transparency
 from .actions import ActionConfig, make_action_space
+from .components import Actions, Encoder, Reward, RewardFactory
 from .observation import ObservationConfig, ObservationEncoder
 from .reward import RewardConfig, RewardTracker
 
@@ -93,14 +94,21 @@ class MultiAgentConfig:
 class MultiAgentMarket:
     """A market with several external learners, stepped one decision at a time."""
 
-    def __init__(self, config: MultiAgentConfig) -> None:
+    def __init__(
+        self, config: MultiAgentConfig, *, encoder: Optional[Encoder] = None, actions: Optional[Actions] = None, reward: Optional[RewardFactory] = None
+    ) -> None:
+        """``encoder``, ``actions`` and ``reward`` replace the parts built from ``config`` (see ``components.py``)."""
         self.config = config
         self.ids = config.learner_ids()
-        self.encoder = ObservationEncoder(config.observation)
-        self.actions = make_action_space(config.actions)
+        self.encoder = encoder if encoder is not None else ObservationEncoder(config.observation)
+        self.actions = actions if actions is not None else make_action_space(config.actions)
+        self.reward_factory = reward if reward is not None else self._default_reward
         self.market: Optional[PerpetualMarket] = None
-        self.trackers: dict[str, RewardTracker] = {}
+        self.trackers: dict[str, Reward] = {}
         self.open: dict[str, bool] = {}
+
+    def _default_reward(self, market: PerpetualMarket, agent_id: str) -> RewardTracker:
+        return RewardTracker(market, agent_id, self.config.reward)
 
     def _advance(self) -> Optional[str]:
         """Run until some learner must decide; returns its id, or ``None`` at the end."""
@@ -112,7 +120,7 @@ class MultiAgentMarket:
     def reset(self, seed: int) -> dict[str, Any]:
         """Start an episode on ``seed`` and return the first decision request."""
         self.market = PerpetualMarket(self.config.market_config(seed))
-        self.trackers = {agent_id: RewardTracker(self.market, agent_id, self.config.reward) for agent_id in self.ids}
+        self.trackers = {agent_id: self.reward_factory(self.market, agent_id) for agent_id in self.ids}
         self.open = {agent_id: False for agent_id in self.ids}
         return self._next_request(closed=[])
 

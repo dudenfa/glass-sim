@@ -469,6 +469,47 @@ single-agent policy, scripted market makers and no extra participants, all
 with the same capital: coalition and per-agent returns, inventory direction,
 fill quality and market quality.
 
+### PettingZoo environment (other MARL libraries)
+
+`GlassAECEnv` puts several learners in one market behind the PettingZoo
+agent-environment-cycle (AEC) API, so any library that accepts PettingZoo AEC
+environments can train on GLASS. It passes PettingZoo's `api_test` and
+`seed_test`.
+
+```python
+from glass_sim.rl.marl import MultiAgentConfig
+from glass_sim.rl.pettingzoo_env import GlassAECEnv
+
+env = GlassAECEnv(MultiAgentConfig(scenario="default", n_learners=3, episode_duration=3600))
+env.reset(seed=1)
+for agent in env.agent_iter():
+    obs, reward, terminated, truncated, info = env.last()
+    action = None if terminated or truncated else my_policy(agent, obs)  # obs["observation"], obs["action_mask"]
+    env.step(action)
+```
+
+- **Turns follow the market.** Each learner wakes on its own random clock;
+  `agent_selection` is whoever must decide next, and `step` runs the market
+  until the next decision. Learners never decide at the same instant, which is
+  why there is no parallel-API version.
+- **Rewards** are the exit-value rewards of the single-agent environment. A
+  decision's reward is known when the learner decides again, so `last()` at a
+  learner's turn returns what it earned since its previous action.
+- **Episode end**: a liquidated learner is terminated; the others are
+  truncated at the end of the episode duration. Done agents are stepped once
+  with `None`, as usual in AEC. `infos[agent]["final_pnl_pct"]` holds the final
+  return.
+- **Masks**: observations are `{"observation", "action_mask"}` dicts; pass
+  `mask_in_observation=False` for plain vectors (the mask stays in
+  `infos[agent]["action_mask"]`). A waiting learner's mask allows only `hold`.
+- `MultiAgentConfig` sets the scenario, number of learners, transparency,
+  capital and action menu (`actions=ActionConfig(kind="ladder")`); `encoder=`,
+  `actions=` and `reward=` take custom components exactly as in
+  `PerpTradingEnv`. `env.market` is the live `PerpetualMarket` for analysis.
+
+[`examples/05_pettingzoo.py`](../examples/05_pettingzoo.py) is a complete,
+runnable loop.
+
 ## Validation
 
 - **Accounting conservation.** The sum of all equities, plus the insurance

@@ -8,6 +8,11 @@
 - Ladder action menu (`ActionConfig(kind="ladder")`, `--actions ladder`):
   market orders and post-only quotes at several price offsets and sizes,
   optionally several resting quotes per side. Checkpoints record the menu.
+- PettingZoo environment (`glass_sim.rl.pettingzoo_env.GlassAECEnv`): several
+  learners in one market through the AEC API, with action masks, liquidation
+  terminations and pluggable components; passes PettingZoo's API and seed
+  tests. PettingZoo joins the `rl` extra. New example `05_pettingzoo.py`.
+- `MultiAgentMarket` accepts custom encoder, action menu and reward.
 
 ## 0.1.0 (2026-10)
 
