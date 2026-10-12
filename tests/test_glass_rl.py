@@ -208,3 +208,18 @@ def test_episode_end_reports_the_final_observation_of_truncated_learners():
     assert truncated == set(request["final_obs"])
     for obs in request["final_obs"].values():
         assert obs.shape == (env.encoder.size,) and obs.dtype == np.float32
+
+
+def test_marl_learners_can_train_blind(tmp_path):
+    pytest.importorskip("sb3_contrib")
+    import json
+
+    from glass_sim.rl.marl import main
+    from glass_sim.rl.policy import policy_agent_from_checkpoint
+
+    args = ["--name", "blind", "--learners", "2", "--timesteps", "300", "--workers", "1", "--rollout", "256", "--scenario", "small"]
+    main(args + ["--episode-duration", "10m", "--transparency", "full", "--no-transparency-features", "--out-root", str(tmp_path)])
+    run = tmp_path / "blind"
+    assert json.loads((run / "config.json").read_text())["env"]["observation"]["include_transparency"] is False
+    agent = policy_agent_from_checkpoint(run / "marl_01" / "model.zip")
+    assert "crowd_net_positioning" not in agent.encoder.feature_names, "a blind learner is rebuilt blind for evaluation"

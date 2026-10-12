@@ -654,6 +654,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--collateral", type=float, default=100_000.0)
     parser.add_argument("--trades-table", type=int, default=0)
     parser.add_argument("--accounts-table", type=int, default=0)
+    parser.add_argument(
+        "--no-transparency-features", action="store_true", help="hide the transparency block from the learners (they trade blind in any market)"
+    )
     parser.add_argument("--net-arch", default="128,128")
     parser.add_argument("--actions", default="basic", choices=["basic", "ladder"], help="action menu (see rl/actions.py and rl/ladder.py)")
     parser.add_argument("--shared-policy", action="store_true")
@@ -670,7 +673,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         episode_duration=parse_duration(args.episode_duration),
         train_seeds=_parse_seeds(args.train_seeds),
         collateral=args.collateral,
-        observation=ObservationConfig(trades_table=args.trades_table, accounts_table=args.accounts_table),
+        observation=ObservationConfig(
+            include_transparency=not args.no_transparency_features, trades_table=args.trades_table, accounts_table=args.accounts_table
+        ),
         actions=ActionConfig(kind=args.actions),
     )
     out = train_marl(
