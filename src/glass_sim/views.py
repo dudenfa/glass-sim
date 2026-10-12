@@ -124,7 +124,12 @@ class AccountView:
 
     @property
     def max_additional_notional(self) -> float:
-        """Rough headroom: extra notional that fits in available margin at max leverage."""
+        """Margin headroom: equity left after the initial-margin requirement, floored at zero.
+
+        This is margin, not notional: at the contract's maximum leverage it
+        supports ``max_leverage`` times this amount of extra notional. Use
+        ``MarketView.max_position`` to size an order in contracts.
+        """
         return max(0.0, self.available_margin)
 
 

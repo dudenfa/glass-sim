@@ -211,7 +211,7 @@ Always use the `rng` argument for randomness, never the global generators.
 | type | count | role |
 |---|---:|---|
 | `MarketMaker` | 3 | multi-level two-sided quotes around a blend of mid and index; spread widens with index volatility and after news; skews to shed inventory |
-| `NoiseTrader` (retail) | 60 | random direction with a mild trend-chasing bias, leverage 3–40x, random holding time, take-profit, no stop-loss |
+| `NoiseTrader` (retail) | 60 | random direction with a mild trend-chasing bias, leverage 3–40x, random holding time, take-profit, no stop-loss. By design this group loses money: typically 15–30% of its capital over a 4-hour session in the reference ecology, paid in spreads, fees, funding and liquidations to the rest of the population |
 | `MomentumTrader` | 8 | position proportional to a fast/slow EMA crossover of the trade price |
 | `BasisArbitrageur` | 4 | sells the perp above the index and buys below it with price-limited orders; anchors the perp to the index |
 | `InformedTrader` | 2 | trades ahead of news on private signals |

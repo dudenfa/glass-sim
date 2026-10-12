@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Docs: the user guide states that the retail group loses money by design
+  (typically 15–30% of its capital per 4-hour session); the docstring of
+  `AccountView.max_additional_notional` says what it returns (margin
+  headroom, not notional). CI also runs on Python 3.14.
 - Docs: the evaluation protocol discloses that scripted agents (the control
   market maker included) react to public news through the `on_news` hook
   while a learner acts only at its next decision, a timing advantage of a
