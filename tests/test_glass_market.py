@@ -272,6 +272,16 @@ def test_external_agent_with_policy_runs_inline():
 
 
 @pytest.mark.parametrize("name", scenarios.names())
+def test_every_scenario_accepts_overrides_of_fields_it_sets_itself(name):
+    config = scenarios.get(name, name="my_run", seed=9, index=IndexConfig(enabled=False), news=NewsConfig(enabled=False), duration=120.0)
+    assert (config.name, config.seed, config.duration) == ("my_run", 9, 120.0)
+    assert not config.index.enabled and not config.news.enabled
+    assert scenarios.get(name).name == name, "without overrides the scenario keeps its own name"
+    if name in ("anonymous", "attributed"):
+        assert scenarios.get(name, transparency=Transparency.FULL).transparency is Transparency.FULL
+
+
+@pytest.mark.parametrize("name", scenarios.names())
 def test_every_scenario_runs_and_conserves(name):
     result = PerpetualMarket(scenarios.get(name, seed=1, duration=300.0)).run()
     summary = result.summary()

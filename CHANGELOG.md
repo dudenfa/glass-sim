@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fix: scenario functions crashed when an override named a field the
+  scenario sets itself (`calm(news=...)`, `anonymous(name="x")`,
+  `retail_frenzy(agents=...)`); overrides now always win.
 - Viewer: a new session's scenario, transparency level and seed are chosen
   in a dialog whose fields start empty, before the session starts; the
   running settings are shown read-only in the control bar, and the dialog

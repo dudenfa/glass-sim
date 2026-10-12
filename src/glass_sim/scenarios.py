@@ -9,7 +9,9 @@ at a time relative to it, so they can be compared directly:
 - ``no_arbitrage()``: removes the basis arbitrageurs that anchor perp to index.
 
 All scenario functions accept keyword overrides for any ``MarketConfig`` field,
-e.g. ``scenarios.default(seed=3, duration=parse_duration("1h"))``.
+e.g. ``scenarios.default(seed=3, duration=parse_duration("1h"))``. Overrides
+win over what the scenario sets itself, so ``calm(news=...)`` or
+``anonymous(name="my_run")`` are valid.
 """
 
 from __future__ import annotations
@@ -97,6 +99,11 @@ def default_population(retail: int = 60, retail_leverage: tuple[float, float] = 
     )
 
 
+def _variant(base: MarketConfig, changes: dict, overrides: dict) -> MarketConfig:
+    """``base`` with the scenario's own ``changes``, then the caller's ``overrides`` on top (so any field can be overridden)."""
+    return replace(base, **{**changes, **overrides})
+
+
 def default(**overrides) -> MarketConfig:
     """Reference ecology: 88 agents of nine types, FULL transparency, 4 hours."""
     config = MarketConfig(agents=default_population(), transparency=Transparency.FULL, duration=4 * HOUR, name="default")
@@ -105,33 +112,35 @@ def default(**overrides) -> MarketConfig:
 
 def anonymous(**overrides) -> MarketConfig:
     """Reference ecology with an anonymous public feed (classic exchange)."""
-    return default(transparency=Transparency.ANONYMOUS, name="anonymous", **overrides)
+    return _variant(default(), {"transparency": Transparency.ANONYMOUS, "name": "anonymous"}, overrides)
 
 
 def attributed(**overrides) -> MarketConfig:
     """Reference ecology where orders and trades show their owner, positions stay private."""
-    return default(transparency=Transparency.ATTRIBUTED, name="attributed", **overrides)
+    return _variant(default(), {"transparency": Transparency.ATTRIBUTED, "name": "attributed"}, overrides)
 
 
 def calm(**overrides) -> MarketConfig:
     """Half the index volatility and a quarter of the news intensity."""
-    return default(index=IndexConfig(daily_volatility=0.015, vol_of_vol=0.01), news=NewsConfig(rate_per_hour=0.5, jump_std=0.003), name="calm", **overrides)
+    changes = {"index": IndexConfig(daily_volatility=0.015, vol_of_vol=0.01), "news": NewsConfig(rate_per_hour=0.5, jump_std=0.003), "name": "calm"}
+    return _variant(default(), changes, overrides)
 
 
 def volatile(**overrides) -> MarketConfig:
     """Double the index volatility and news intensity, larger news jumps."""
-    return default(index=IndexConfig(daily_volatility=0.06, vol_of_vol=0.04), news=NewsConfig(rate_per_hour=4.0, jump_std=0.012), name="volatile", **overrides)
+    changes = {"index": IndexConfig(daily_volatility=0.06, vol_of_vol=0.04), "news": NewsConfig(rate_per_hour=4.0, jump_std=0.012), "name": "volatile"}
+    return _variant(default(), changes, overrides)
 
 
 def retail_frenzy(**overrides) -> MarketConfig:
     """Twice as many retail traders, all at 20-40x leverage."""
-    return default(agents=default_population(retail=120, retail_leverage=(20.0, 40.0)), name="retail_frenzy", **overrides)
+    return _variant(default(), {"agents": default_population(retail=120, retail_leverage=(20.0, 40.0)), "name": "retail_frenzy"}, overrides)
 
 
 def no_arbitrage(**overrides) -> MarketConfig:
     """Reference ecology without the basis arbitrageurs that anchor perp to index."""
     agents = tuple(spec for spec in default_population() if spec.agent is not BasisArbitrageur)
-    return default(agents=agents, name="no_arbitrage", **overrides)
+    return _variant(default(), {"agents": agents, "name": "no_arbitrage"}, overrides)
 
 
 def small(**overrides) -> MarketConfig:
@@ -160,12 +169,16 @@ SCENARIOS: dict[str, Callable[..., MarketConfig]] = {
 }
 
 
-def get(name: str, **overrides) -> MarketConfig:
-    """Build a scenario by name; the ``KeyError`` lists the valid names."""
+def get(scenario: str, /, **overrides) -> MarketConfig:
+    """Build a scenario by name with any field overrides; the ``KeyError`` lists the valid names.
+
+    The scenario is positional-only so that ``name=`` stays available as an
+    override of ``MarketConfig.name``.
+    """
     try:
-        factory = SCENARIOS[name]
+        factory = SCENARIOS[scenario]
     except KeyError as exc:
-        raise KeyError(f"unknown scenario {name!r}; available: {', '.join(sorted(SCENARIOS))}") from exc
+        raise KeyError(f"unknown scenario {scenario!r}; available: {', '.join(sorted(SCENARIOS))}") from exc
     return factory(**overrides)
 
 
