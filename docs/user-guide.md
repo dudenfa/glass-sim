@@ -437,6 +437,18 @@ glass evaluate checkpoints/my_agent --seeds 31-40      # model vs random vs hold
 glass serve --rl checkpoints/my_agent                  # watch it trade
 ```
 
+`glass evaluate` runs the trained policy next to baselines on the same seeds:
+a random policy, a policy that never trades, the market without the extra
+participant, and a scripted market maker with the learner's capital and mean
+decision interval (the control). One asymmetry remains and should be reported
+with any comparison: scripted agents, the control included, are told about
+public news the moment it lands (through the `on_news` hook) and can react
+after the usual latency, whereas a learner acts only at its next decision, on
+average half a wake interval later. Around each news item, about two per hour
+in the reference ecology, the control therefore has a timing advantage of a
+few seconds. A per-agent news delay that would put both on the same footing
+is not implemented.
+
 Run `glass train --help` for all options (transparency, capital, wake rate,
 private signals, penalties, exposure cap). A trained policy can join any
 scenario through `glass_sim.rl.policy.policy_agent_from_checkpoint`.
@@ -535,7 +547,8 @@ python -m glass_sim.rl.marl_evaluate checkpoints/my_marl --single checkpoints/my
 The evaluation compares the jointly trained learners with copies of a
 single-agent policy, scripted market makers and no extra participants, all
 with the same capital: coalition and per-agent returns, inventory direction,
-fill quality and market quality.
+fill quality and market quality. The news-timing asymmetry described above
+for the single-agent evaluation applies here too.
 
 ### PettingZoo environment (other MARL libraries)
 

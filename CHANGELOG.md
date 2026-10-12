@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Docs: the evaluation protocol discloses that scripted agents (the control
+  market maker included) react to public news through the `on_news` hook
+  while a learner acts only at its next decision, a timing advantage of a
+  few seconds for the control around each news item.
 - Docs: the liquidation hunter is described as what it is, an economic rule
   that fires rarely in calm markets and several times in the `volatile`
   scenario, rather than an always-active strategy.

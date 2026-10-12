@@ -18,8 +18,15 @@ same exogenous world) is run once per *treatment*:
   between ``model`` and ``blind`` measures how much the agent uses them.
 
 All treatments with a learner use the same capital, wake rate, observation
-and action spaces. Results are reported per seed and as medians, with paired
-model-minus-baseline differences, and written to ``<run>/eval_<seeds>/``.
+and action spaces. One asymmetry remains and should be reported with the
+results: scripted agents, the control market maker included, are told about
+public news the moment it lands (the ``on_news`` hook) and can pull or move
+their quotes after the usual latency, whereas a learner acts only at its next
+decision, on average half a wake interval later. Around each news item (about
+two per hour in the reference ecology) the control therefore has a timing
+advantage of a few seconds. Results are reported per seed and as medians,
+with paired model-minus-baseline differences, and written to
+``<run>/eval_<seeds>/``.
 """
 
 from __future__ import annotations
