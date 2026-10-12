@@ -146,6 +146,22 @@ def test_auto_deleveraging_when_book_cannot_absorb():
     assert m.conservation_error() == pytest.approx(0.0, abs=1e-6)
 
 
+def test_each_liquidation_in_a_cascade_uses_the_mark_moved_by_the_previous_one():
+    m = bare_market({"mm": 5_000_000.0, "c": 5_000_000.0, "a": 1_000.0, "b": 1_000.0})
+    m.execute("mm", [LimitOrder(Side.SELL, 10_000, 100.0)])
+    m.execute("a", [MarketOrder(Side.BUY, 350)])
+    m.execute("b", [MarketOrder(Side.BUY, 350)])
+    # A thin, sloping bid side: the first forced sale walks the book down.
+    m.execute("mm", [LimitOrder(Side.BUY, 300, 97.0), LimitOrder(Side.BUY, 300, 94.0), LimitOrder(Side.BUY, 2_000, 90.0)])
+    m.execute("c", [LimitOrder(Side.SELL, 1, 97.0, tif=TimeInForce.IOC)])  # a print at 97 pulls the mark below both liquidation prices
+    m.shock_index(math.log(96.0 / 100.0))
+    first, second = m.recorder.liquidations
+    assert {first.agent_id, second.agent_id} == {"a", "b"}
+    assert second.mark_price < first.mark_price, "the second liquidation must see the mark moved by the first"
+    assert m.accounts["a"].position == 0 and m.accounts["b"].position == 0
+    assert m.conservation_error() == pytest.approx(0.0, abs=1e-6)
+
+
 # -------------------------------------------------------------------- funding
 
 

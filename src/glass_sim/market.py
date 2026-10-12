@@ -785,18 +785,25 @@ class PerpetualMarket:
         """
         if not self.config.liquidation.enabled:
             return
+        mmr = self._mmr
         # Liquidation fills move the mark, which can trigger further liquidations (a cascade).
         for _ in range(len(self.accounts) + 1):
             mark = self.mark_price
             underwater = [
-                account for account in self.accounts.values() if account.position != 0 and account.equity(mark) < account.maintenance_margin(mark, self._mmr)
+                account for account in self.accounts.values() if account.position != 0 and account.equity(mark) < account.maintenance_margin(mark, mmr)
             ]
             if not underwater:
                 return
-            underwater.sort(key=lambda a: (a.equity(mark) - a.maintenance_margin(mark, self._mmr), a.agent_id))
+            underwater.sort(key=lambda a: (a.equity(mark) - a.maintenance_margin(mark, mmr), a.agent_id))
             for account in underwater:
+                # Each liquidation is priced at the mark as it is *now*: the previous one in this
+                # pass may have swept the book (so the next forced close, its penalty and any ADL
+                # use the moved price) or, for the opposite side, moved the mark back above water.
+                mark = self.mark_price
+                if account.position == 0 or account.equity(mark) >= account.maintenance_margin(mark, mmr):
+                    continue
                 self._liquidate(account)
-            self.mark_price = self._compute_mark()
+                self.mark_price = self._compute_mark()
 
     def _liquidate(self, account: MarginAccount) -> None:
         """Force-close one account: cancel, sell into the book, auto-deleverage the rest, charge the penalty, settle bad debt.

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fix: when several accounts were liquidated in the same pass of a cascade,
+  all of them were priced at the mark from before the pass; each forced
+  close, its penalty and any auto-deleveraging now use the mark as moved by
+  the previous liquidation, and an account that the previous liquidation
+  pushed back above water is no longer liquidated. Runs with simultaneous
+  liquidations are therefore not bit-identical to those of earlier versions.
 - Fix: scenario functions crashed when an override named a field the
   scenario sets itself (`calm(news=...)`, `anonymous(name="x")`,
   `retail_frenzy(agents=...)`); overrides now always win.
