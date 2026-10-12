@@ -616,6 +616,11 @@ class FlowFollower(Agent):
     working a large order, say), it trades in the same direction, betting
     that the flow will continue to push the price. This is "wallet watching"
     as practised on on-chain exchanges. In an anonymous market it stays idle.
+
+    The window is capped by what the market remembers: it reads at most
+    ``MarketConfig.recent_trades_kept`` trades (2,000 by default, about
+    15 minutes in the reference ecology), so in a much busier market the
+    effective window is shorter than ``window`` unless that setting is raised.
     """
 
     agent_type = "flow_follower"
