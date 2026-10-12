@@ -196,13 +196,29 @@ class LiveSession:
                 self._build(*self._settings)
             elif action == "reset":
                 self.playing = False
-                self._build(
-                    str(payload.get("scenario") or self.scenario),
-                    int(payload.get("seed", self.market.seed)),
-                    payload.get("transparency") or None,
-                )
+                self._build(*self._next_settings(payload))
             else:
                 raise ValueError(f"unknown action {action!r}")
+
+    def _next_settings(self, payload: dict[str, Any]) -> tuple[str, int, Optional[str]]:
+        """Settings of a new live session: a field left out of the request keeps its current value.
+
+        Transparency follows the scenario: when the request changes the
+        scenario without naming a transparency level, the new scenario's own
+        level applies; otherwise the running level is kept, so a bare reset
+        never changes what the agents can see. Everything is validated before
+        the market is rebuilt, so a bad request leaves the session untouched.
+        """
+        scenario = str(payload.get("scenario") or self.scenario)
+        if scenario not in scenarios.SCENARIOS:
+            raise ValueError(f"unknown scenario {scenario!r}")
+        seed = int(payload.get("seed", self.market.seed))
+        transparency = payload.get("transparency")
+        if not transparency and scenario == self.scenario:
+            transparency = self.market.config.transparency.value
+        if transparency:
+            transparency = Transparency(str(transparency)).value  # raises ValueError on an unknown level
+        return scenario, seed, transparency or None
 
     # ------------------------------------------------------------------ state
 

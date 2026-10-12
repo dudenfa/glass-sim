@@ -35,6 +35,7 @@
       <button id="btn-step" title="Advance 10 simulated seconds">+10s</button>
       <button id="btn-step60" title="Advance 60 simulated seconds">+1m</button>
       <button id="btn-end" title="Run to the end of the session">End ⏭</button>
+      <button id="btn-rewind" title="Watch the same session again from the start (same scenario, transparency and seed)">⏮ Restart</button>
       <label>Speed
         <select id="speed">
           <option value="1">1×</option><option value="5">5×</option><option value="10">10×</option>
@@ -55,18 +56,31 @@
       <button id="btn-restart">↺ Restart replay</button>
     </div>
     <div class="group" id="session-group">
-      <label>Scenario <select id="scenario"></select></label>
-      <label>Agents see
-        <select id="transparency">
-          <option value="full">Full (Hyperliquid-like)</option>
-          <option value="attributed">Attributed (owners only)</option>
-          <option value="anonymous">Anonymous (classic exchange)</option>
-        </select>
-      </label>
-      <label>Seed <input id="seed" type="number" value="1" min="0"></label>
-      <button id="btn-reset">↺ New session</button>
+      <span class="session-active" id="session-active" title="Settings of the running session"></span>
+      <button id="btn-reset">↺ New session…</button>
     </div>
   </section>
+
+  <dialog id="session-dialog" class="session-dialog" aria-labelledby="session-dialog-title">
+    <div class="session-dialog-title" id="session-dialog-title">New session</div>
+    <p class="muted session-dialog-note" id="session-dialog-note">Choose the scenario, what the agents can see and the seed. The current session is discarded when the new one starts.</p>
+    <label>Scenario
+      <select id="scenario"><option value="" disabled selected>choose…</option></select>
+    </label>
+    <label>Agents see
+      <select id="transparency">
+        <option value="" disabled selected>choose…</option>
+        <option value="full">Full (Hyperliquid-like)</option>
+        <option value="attributed">Attributed (owners only)</option>
+        <option value="anonymous">Anonymous (classic exchange)</option>
+      </select>
+    </label>
+    <label>Seed <input id="seed" type="number" min="0" placeholder="e.g. 1"></label>
+    <div class="session-dialog-actions">
+      <button id="btn-cancel" class="ghost">Cancel</button>
+      <button id="btn-start" class="primary" disabled>▶ Start session</button>
+    </div>
+  </dialog>
 
   <main class="grid">
     <section class="panel chart-panel">

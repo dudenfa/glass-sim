@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Viewer: a new session's scenario, transparency level and seed are chosen
+  in a dialog whose fields start empty, before the session starts; the
+  running settings are shown read-only in the control bar, and the dialog
+  opens by itself when a session ends. A restart button rewatches the same
+  session from the start. Fix: a `reset` request that left out the transparency level rebuilt
+  the market at the scenario's default level instead of the running one
+  (for example after `glass serve --transparency anonymous`); missing fields
+  now keep their current value and bad values are rejected before anything
+  is rebuilt.
 - Fix: in the multi-agent trainer (`glass_sim.rl.marl`), a learner's last
   transition of an episode cut by the time limit bootstrapped from the first
   decision of the next episode on the same worker, and its advantage chained

@@ -50,6 +50,14 @@ label { color: var(--muted); display: inline-flex; gap: 6px; align-items: center
 .clock { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 13px; }
 .progress { width: 220px; height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; cursor: pointer; }
 .progress:hover { outline: 1px solid var(--accent); }
+.session-active { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.session-dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; width: 340px; max-width: calc(100vw - 32px); box-shadow: 0 16px 48px rgba(0,0,0,.55); }
+.session-dialog::backdrop { background: rgba(4, 7, 11, .65); }
+.session-dialog-title { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+.session-dialog-note { margin: 0 0 14px; line-height: 1.4; }
+.session-dialog label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; color: var(--muted); }
+.session-dialog select, .session-dialog input { width: 100%; }
+.session-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .mode-badge { background: var(--accent); color: #0b0e14; border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; }
 #progress-bar { height: 100%; width: 0; background: var(--accent); }
 

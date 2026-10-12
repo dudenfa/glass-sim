@@ -59,7 +59,7 @@ const S = {
   drawerId: null,
   drawerFetched: 0,
   controlsInit: false,
-  pendingSession: false,
+  finishedPrompted: null, // session key for which the form was already opened at the end
   aboutTransparency: null,
 };
 
@@ -201,21 +201,30 @@ function renderControls(st) {
   play.disabled = s.finished;
   if (!S.controlsInit) {
     const sel = $("scenario");
-    sel.innerHTML = s.scenarios.map((n) => `<option value="${n}">${n}</option>`).join("");
+    sel.innerHTML = `<option value="" disabled selected>choose…</option>` + s.scenarios.map((n) => `<option value="${n}">${n}</option>`).join("");
     S.controlsInit = true;
   }
-  // Session settings the user has edited stay as typed until "New session" applies them.
-  if (!S.pendingSession) {
-    $("scenario").value = s.scenario;
-    $("transparency").value = s.transparency;
-    $("seed").value = s.seed;
-  }
-  $("btn-reset").classList.toggle("primary", S.pendingSession);
-  $("btn-reset").textContent = S.pendingSession ? "↺ Start new session" : "↺ New session";
-  if (document.activeElement !== $("speed")) $("speed").value = String(s.speed);
-  // Replay mode: the run is fixed, so the new-session form gives way to the replay's description and check.
   const replay = s.mode === "replay";
+  // The running session's settings are always shown, read-only. A new session is configured
+  // in a form that starts empty: scenario, transparency and seed are chosen before it starts.
+  $("session-active").textContent = `${s.scenario} · ${s.transparency} · seed ${s.seed}`;
+  const key = `${s.scenario}|${s.transparency}|${s.seed}`;
+  if (s.finished && !replay && S.finishedPrompted !== key) {
+    S.finishedPrompted = key;
+    openSessionForm();
+  }
+  $("btn-reset").classList.toggle("primary", s.finished);
+  $("btn-reset").textContent = s.finished ? "▶ New session…" : "↺ New session…";
+  $("session-dialog-title").textContent = s.finished ? "Session finished: start a new one" : "New session";
+  $("session-dialog-note").textContent = s.finished
+    ? "Choose the scenario, what the agents can see and the seed for the next session."
+    : "Choose the scenario, what the agents can see and the seed. The current session is discarded when the new one starts.";
+  $("btn-start").textContent = s.finished ? "▶ Start new session" : "▶ Start session";
+  $("btn-start").disabled = !sessionFormValid();
+  if (document.activeElement !== $("speed")) $("speed").value = String(s.speed);
+  // Replay mode: the run is fixed, so the new-session controls give way to the replay's description and check.
   $("mode-badge").classList.toggle("hidden", !replay);
+  $("btn-rewind").classList.toggle("hidden", replay); // replays have their own restart button
   $("session-group").classList.toggle("hidden", replay);
   $("replay-group").classList.toggle("hidden", !replay);
   if (replay) {
@@ -236,6 +245,37 @@ function renderControls(st) {
     anonymous: "agents see no owners (you do, as the researcher)",
   }[s.transparency];
   $("book-note").textContent = note;
+}
+
+// ------------------------------------------------------------ session form
+
+function sessionFormValid() {
+  const seed = $("seed").value.trim();
+  return $("scenario").value !== "" && $("transparency").value !== "" && seed !== "" && Number.isInteger(Number(seed)) && Number(seed) >= 0;
+}
+
+function openSessionForm() {
+  // Every field is cleared: the next session's settings are chosen explicitly, never inherited.
+  $("scenario").value = "";
+  $("transparency").value = "";
+  $("seed").value = "";
+  const dialog = $("session-dialog");
+  if (!dialog.open) dialog.showModal();
+  if (S.state) renderControls(S.state);
+  $("scenario").focus();
+}
+
+function closeSessionForm() {
+  const dialog = $("session-dialog");
+  if (dialog.open) dialog.close();
+}
+
+function startSession() {
+  if (!sessionFormValid()) return;
+  const settings = { scenario: $("scenario").value, transparency: $("transparency").value, seed: Number($("seed").value) };
+  closeSessionForm();
+  S.finishedPrompted = null;
+  control("reset", settings);
 }
 
 // -------------------------------------------------------------- chart
@@ -814,12 +854,15 @@ function setup() {
   $("btn-step60").addEventListener("click", () => control("step", { seconds: 60 }));
   $("btn-end").addEventListener("click", () => control("finish"));
   $("speed").addEventListener("change", (e) => control("speed", { speed: Number(e.target.value) }));
-  const startSession = () => {
-    S.pendingSession = false;
-    control("reset", { scenario: $("scenario").value, transparency: $("transparency").value, seed: Number($("seed").value) });
-  };
-  $("btn-reset").addEventListener("click", startSession);
+  $("btn-reset").addEventListener("click", openSessionForm);
+  $("btn-start").addEventListener("click", startSession);
+  $("btn-cancel").addEventListener("click", closeSessionForm);
+  // Closing (also with Escape) returns focus to the button that opened the dialog; drop it so the space-bar play shortcut cannot press it.
+  $("session-dialog").addEventListener("close", () => $("btn-reset").blur());
   $("btn-restart").addEventListener("click", () => control("reset"));
+  // Same settings, back to time 0: runs are deterministic, so this is an exact re-watch. The
+  // end-of-session prompt is armed again so it shows when the rerun finishes.
+  $("btn-rewind").addEventListener("click", () => { closeSessionForm(); S.finishedPrompted = null; control("reset"); });
   $("progress").addEventListener("click", (e) => {
     if (!S.state) return;
     const box = e.currentTarget.getBoundingClientRect();
@@ -828,8 +871,8 @@ function setup() {
     control("seek", { time: fraction * S.state.session.duration });
   });
   for (const id of ["scenario", "transparency", "seed"]) {
-    $(id).addEventListener("input", () => { S.pendingSession = true; renderControls(S.state); });
-    $(id).addEventListener("change", () => { S.pendingSession = true; renderControls(S.state); });
+    $(id).addEventListener("input", () => { $("btn-start").disabled = !sessionFormValid(); });
+    $(id).addEventListener("change", () => { $("btn-start").disabled = !sessionFormValid(); });
   }
   $("seed").addEventListener("keydown", (e) => { if (e.key === "Enter") startSession(); });
   document.querySelectorAll("#bottom-tabs button").forEach((b) => b.addEventListener("click", () => {
@@ -857,7 +900,7 @@ function setup() {
   $("drawer-close").addEventListener("click", () => { S.drawerId = null; $("drawer").classList.add("hidden"); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { S.drawerId = null; $("drawer").classList.add("hidden"); }
-    if (e.key === " " && !["INPUT", "SELECT"].includes(document.activeElement.tagName)) { e.preventDefault(); $("btn-play").click(); }
+    if (e.key === " " && !$("session-dialog").open && !["INPUT", "SELECT"].includes(document.activeElement.tagName)) { e.preventDefault(); $("btn-play").click(); }
   });
   setupChartInteraction();
   setupBookTooltip();

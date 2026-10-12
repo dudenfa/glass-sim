@@ -342,9 +342,15 @@ Opens http://127.0.0.1:8766 with:
   type, liquidations, funding history, news, order flow, live market-quality
   and stylized-fact statistics, and an explanation of the mechanics;
 - click any account for its equity curve, position, parameters, orders and fills;
-- controls: play/pause (space bar), step, run to end, speed, a timeline you
-  can click to jump to any moment, and a new session with another scenario,
-  transparency level or seed;
+- controls: play/pause (space bar), step, run to end, restart (watch the same
+  session again from the start: runs are deterministic, so it is an exact
+  rerun), speed, and a timeline you can click to jump to any moment;
+- sessions: the running session's scenario, transparency level and seed are
+  always shown next to the controls. "New session" opens a dialog whose
+  fields start empty, so all three settings are chosen explicitly before the
+  session starts; when a session reaches its end the dialog opens by itself. Over the
+  API, a `reset` that leaves a field out keeps the running value (a changed
+  scenario without a transparency level takes that scenario's own level);
 - replay mode: `glass serve --replay runs/my_run` plays back a saved run (see
   [Saving and replaying runs](#saving-and-replaying-runs)) with the same
   controls; at the end it shows whether the playback matched the original.

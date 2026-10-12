@@ -39,3 +39,26 @@ def test_viewer_serves_page_and_api():
         assert json.loads(urllib.request.urlopen(request).read())["ok"]
     finally:
         viewer.stop()
+
+
+def test_reset_keeps_settings_that_are_not_given_and_rejects_bad_ones():
+    import pytest
+
+    session = LiveSession(scenario="small", seed=1, transparency="anonymous", duration=60.0)
+    session.control({"action": "finish"})
+    session.control({"action": "reset"})  # same session again
+    state = session.state()["session"]
+    assert (state["scenario"], state["transparency"], state["seed"]) == ("small", "anonymous", 1)
+    assert not state["finished"]
+    session.control({"action": "reset", "seed": 2})  # only the seed changes
+    state = session.state()["session"]
+    assert (state["scenario"], state["transparency"], state["seed"]) == ("small", "anonymous", 2)
+    session.control({"action": "reset", "scenario": "default"})  # a new scenario brings its own level
+    state = session.state()["session"]
+    assert (state["scenario"], state["transparency"], state["seed"]) == ("default", "full", 2)
+    with pytest.raises(ValueError):
+        session.control({"action": "reset", "transparency": "bogus"})
+    with pytest.raises(ValueError):
+        session.control({"action": "reset", "scenario": "nope"})
+    state = session.state()["session"]
+    assert (state["scenario"], state["transparency"], state["seed"]) == ("default", "full", 2), "a bad request leaves the session untouched"
